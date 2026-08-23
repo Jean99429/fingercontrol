@@ -1,0 +1,7 @@
+{
+  "name": "fingercontrol",
+  "description": "Real-time fingertip and pinch-controlled visual performance & recording tool",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

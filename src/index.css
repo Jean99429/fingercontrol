@@ -1,0 +1,36 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background-color: #080808;
+    color: #e2e2e2;
+  }
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: #0d0d0d;
+}
+::-webkit-scrollbar-thumb {
+  background: #262626;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #404040;
+}
+
+/* CRT scanline / subtle screen feel for recording frame */
+.subtle-grid {
+  background-size: 32px 32px;
+  background-image: 
+    linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+}
