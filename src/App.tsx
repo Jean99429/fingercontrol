@@ -1,110 +1,40 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FingercontrolConfig } from './types/config';
+import { FingercontrolConfig, GestureEvent, VideoAnalysisFrame } from './types/config';
 import { loadConfig, saveConfig } from './utils/storage';
 import { SetupScreen } from './components/SetupScreen';
 import { PerformanceScreen } from './components/PerformanceScreen';
 import { gestureRecognizer } from './vision/gestureRecognizer';
-import { personSegmentation } from './vision/segmentation';
 import { audioManager } from './utils/audio';
-
-// Helper for generating a virtual synthetic performer video stream
-export function createSyntheticVideoStream(): MediaStream {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1280;
-  canvas.height = 720;
-  const ctx = canvas.getContext('2d')!;
-
-  let frame = 0;
-  const drawSyntheticPerformer = () => {
-    frame++;
-    const w = canvas.width;
-    const h = canvas.height;
-    const t = frame * 0.03;
-
-    // Dark stage background with subtle studio gradient
-    const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 80, w / 2, h / 2, w / 1.4);
-    bgGrad.addColorStop(0, '#1c1c1c');
-    bgGrad.addColorStop(1, '#050505');
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, w, h);
-
-    // Subtle ambient grid
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < w; x += 60) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, h);
-      ctx.stroke();
-    }
-    for (let y = 0; y < h; y += 60) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(w, y);
-      ctx.stroke();
-    }
-
-    // Performer head and torso silhouette
-    const cx = w / 2 + Math.sin(t * 0.5) * 15;
-    const cy = h / 2 + Math.cos(t * 0.3) * 8;
-
-    // Torso
-    ctx.fillStyle = '#222224';
-    ctx.beginPath();
-    ctx.ellipse(cx, cy + 180, 160, 220, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Neck
-    ctx.fillStyle = '#444448';
-    ctx.fillRect(cx - 30, cy + 40, 60, 80);
-
-    // Head
-    ctx.fillStyle = '#55555c';
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - 20, 90, 115, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Hands in motion (left and right)
-    const leftHandX = cx - 220 + Math.cos(t * 0.8) * 30;
-    const leftHandY = cy + 60 + Math.sin(t * 0.8) * 40;
-    const rightHandX = cx + 220 + Math.sin(t * 0.8) * 30;
-    const rightHandY = cy + 60 + Math.cos(t * 0.8) * 40;
-
-    // Left hand
-    ctx.fillStyle = '#666670';
-    ctx.beginPath();
-    ctx.arc(leftHandX, leftHandY, 45, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Right hand
-    ctx.fillStyle = '#666670';
-    ctx.beginPath();
-    ctx.arc(rightHandX, rightHandY, 45, 0, Math.PI * 2);
-    ctx.fill();
-
-    requestAnimationFrame(drawSyntheticPerformer);
-  };
-
-  requestAnimationFrame(drawSyntheticPerformer);
-  return canvas.captureStream(30);
-}
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<'SETUP' | 'PERFORMANCE'>('SETUP');
+  const [inputMode, setInputMode] = useState<'CAMERA' | 'UPLOAD_VIDEO'>('CAMERA');
   const [config, setConfig] = useState<FingercontrolConfig>(() => loadConfig());
 
-  // Camera & Device State
-  const [videoStream, setVideoStream] = useState<MediaStream | null>(null);
-  const [isVirtualCamera, setIsVirtualCamera] = useState<boolean>(false);
+  // Camera State
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
 
-  // Loading & Error States
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [loadingMessage, setLoadingMessage] = useState<string>('');
+  // Upload Video State
+  const [displayVideoFile, setDisplayVideoFile] = useState<File | null>(null);
+  const [trackingVideoFile, setTrackingVideoFile] = useState<File | null>(null);
+  const [displayVideoUrl, setDisplayVideoUrl] = useState<string | null>(null);
+  const [trackingVideoUrl, setTrackingVideoUrl] = useState<string | null>(null);
+  const [displayVideoMeta, setDisplayVideoMeta] = useState<{ duration: number; width: number; height: number } | null>(null);
+  const [trackingVideoMeta, setTrackingVideoMeta] = useState<{ duration: number; width: number; height: number } | null>(null);
+
+  // Video Analysis State
+  const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
+  const [analysisProgress, setAnalysisProgress] = useState<number>(0);
+  const [analysisStatus, setAnalysisStatus] = useState<string>('');
+  const [gestureEvents, setGestureEvents] = useState<GestureEvent[]>([]);
+  const [analysisFrames, setAnalysisFrames] = useState<VideoAnalysisFrame[]>([]);
+
+  // Errors & Notifications
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Enumerate cameras
+  // Enumerate camera devices
   const refreshDevices = useCallback(async () => {
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
@@ -130,11 +60,62 @@ export const App: React.FC = () => {
     saveConfig(newConfig);
   };
 
-  // Launch Performance Mode (Real Camera or Fallback)
-  const handleStartPerformance = async (useDemo: boolean = false) => {
-    setIsLoading(true);
+  // Manage Display Video file selection & metadata extraction
+  const handleSelectDisplayVideo = (file: File) => {
+    if (displayVideoUrl) {
+      URL.revokeObjectURL(displayVideoUrl);
+    }
+    const url = URL.createObjectURL(file);
+    setDisplayVideoFile(file);
+    setDisplayVideoUrl(url);
     setErrorMessage(null);
-    setLoadingMessage('INITIALIZING AUDIO SYSTEM...');
+
+    const tempVideo = document.createElement('video');
+    tempVideo.src = url;
+    tempVideo.preload = 'metadata';
+    tempVideo.onloadedmetadata = () => {
+      setDisplayVideoMeta({
+        duration: tempVideo.duration,
+        width: tempVideo.videoWidth,
+        height: tempVideo.videoHeight,
+      });
+    };
+    tempVideo.onerror = () => {
+      setErrorMessage('Could not decode display video. Please select a valid MP4 or WebM file.');
+    };
+  };
+
+  // Manage Tracking Video file selection & metadata extraction
+  const handleSelectTrackingVideo = (file: File | null) => {
+    if (trackingVideoUrl) {
+      URL.revokeObjectURL(trackingVideoUrl);
+    }
+    if (!file) {
+      setTrackingVideoFile(null);
+      setTrackingVideoUrl(null);
+      setTrackingVideoMeta(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    setTrackingVideoFile(file);
+    setTrackingVideoUrl(url);
+
+    const tempVideo = document.createElement('video');
+    tempVideo.src = url;
+    tempVideo.preload = 'metadata';
+    tempVideo.onloadedmetadata = () => {
+      setTrackingVideoMeta({
+        duration: tempVideo.duration,
+        width: tempVideo.videoWidth,
+        height: tempVideo.videoHeight,
+      });
+    };
+  };
+
+  // Launch Camera Mode
+  const handleStartCamera = async () => {
+    setErrorMessage(null);
 
     // 1. Initialize Audio Context on user click
     try {
@@ -143,23 +124,7 @@ export const App: React.FC = () => {
       console.warn('AudioContext init error:', e);
     }
 
-    if (useDemo) {
-      setIsVirtualCamera(true);
-      const demoStream = createSyntheticVideoStream();
-      setVideoStream(demoStream);
-
-      // Start background model loading (non-blocking)
-      gestureRecognizer.initialize().catch(() => {});
-      personSegmentation.initialize().catch(() => {});
-
-      setIsLoading(false);
-      setCurrentScreen('PERFORMANCE');
-      return;
-    }
-
-    setLoadingMessage('REQUESTING CAMERA ACCESS...');
-
-    let stream: MediaStream | null = null;
+    // 2. Request Camera access
     try {
       const constraints: MediaStreamConstraints = {
         video: selectedDeviceId
@@ -168,65 +133,136 @@ export const App: React.FC = () => {
         audio: false,
       };
 
-      // 4 second timeout on camera request
-      const cameraPromise = navigator.mediaDevices.getUserMedia(constraints);
-      const timeoutPromise = new Promise<null>((_, reject) =>
-        setTimeout(() => reject(new Error('Camera request timed out')), 4000)
-      );
-
-      stream = (await Promise.race([cameraPromise, timeoutPromise])) as MediaStream;
-      setIsVirtualCamera(false);
-      setVideoStream(stream);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setCameraStream(stream);
       refreshDevices();
     } catch (err: unknown) {
-      console.warn('Camera failed or timed out, falling back to Virtual Studio Stream:', err);
-      setIsVirtualCamera(true);
-      const fallbackStream = createSyntheticVideoStream();
-      setVideoStream(fallbackStream);
+      console.warn('Camera access denied or failed:', err);
       setErrorMessage(
-        'Camera is not accessible or permission was denied. Switched to Virtual Studio Mode so you can perform immediately!'
+        'Camera permission was denied or camera is inaccessible. Please allow camera access in your browser settings to continue.'
       );
+      return;
     }
 
-    // 3. Load Vision Models in background (with built-in timeouts)
-    setLoadingMessage('STARTING REAL-TIME TRACKING ENGINE...');
-    await Promise.allSettled([
-      gestureRecognizer.initialize(),
-      personSegmentation.initialize(),
-    ]);
+    // 3. Initialize Vision Model
+    await gestureRecognizer.initialize();
 
-    setIsLoading(false);
     setCurrentScreen('PERFORMANCE');
   };
 
-  const handleEditSetup = () => {
+  // Analyze Uploaded Video Frame by Frame
+  const handleStartAnalyzeVideo = async () => {
+    if (!displayVideoFile || !displayVideoUrl) {
+      setErrorMessage('Please select a display video first.');
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsAnalyzing(true);
+    setAnalysisProgress(0);
+    setAnalysisStatus('INITIALIZING VISION TRACKER...');
+
+    // 1. Initialize Audio Context
+    try {
+      audioManager.initAudioContext();
+    } catch (e) {
+      console.warn('AudioContext init error:', e);
+    }
+
+    try {
+      // 2. Create offscreen video element for analysis
+      // Use tracking video if provided, otherwise display video
+      const targetUrl = trackingVideoUrl || displayVideoUrl;
+      const analysisVideo = document.createElement('video');
+      analysisVideo.src = targetUrl;
+      analysisVideo.muted = true;
+      analysisVideo.playsInline = true;
+
+      await new Promise<void>((resolve, reject) => {
+        analysisVideo.onloadedmetadata = () => resolve();
+        analysisVideo.onerror = () => reject(new Error('Failed to load video for analysis'));
+      });
+
+      // 3. Perform frame-by-frame MediaPipe Hand Landmarker analysis
+      const result = await gestureRecognizer.analyzeVideo(
+        analysisVideo,
+        config.slots,
+        config.mirroredVideo,
+        (progress, status) => {
+          setAnalysisProgress(progress);
+          setAnalysisStatus(status);
+        }
+      );
+
+      setGestureEvents(result.events);
+      setAnalysisFrames(result.frames);
+      setIsAnalyzing(false);
+      setCurrentScreen('PERFORMANCE');
+    } catch (err: unknown) {
+      console.error('Video analysis error:', err);
+      setIsAnalyzing(false);
+      setErrorMessage(
+        'An error occurred during video analysis. Please ensure the video format is supported by your browser.'
+      );
+    }
+  };
+
+  // Back to Setup Screen
+  const handleBackToSetup = () => {
+    // Stop camera stream if active
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t) => t.stop());
+      setCameraStream(null);
+    }
+    audioManager.stopAll();
     setCurrentScreen('SETUP');
   };
 
+  // Re-run analysis
+  const handleReanalyze = () => {
+    handleBackToSetup();
+    // Re-trigger analysis after returning
+    setTimeout(() => {
+      handleStartAnalyzeVideo();
+    }, 100);
+  };
+
   return (
-    <div className="w-full min-h-screen bg-[#080808]">
+    <div className="w-full min-h-screen bg-[#07111F]">
       {currentScreen === 'SETUP' ? (
         <SetupScreen
           config={config}
           onUpdateConfig={handleUpdateConfig}
-          onStartPerformance={() => handleStartPerformance(false)}
-          onStartDemoPerformance={() => handleStartPerformance(true)}
-          isLoading={isLoading}
-          loadingMessage={loadingMessage}
-          errorMessage={errorMessage}
+          inputMode={inputMode}
+          onChangeInputMode={setInputMode}
           videoDevices={videoDevices}
           selectedDeviceId={selectedDeviceId}
           onSelectDeviceId={setSelectedDeviceId}
+          onStartCamera={handleStartCamera}
+          displayVideoFile={displayVideoFile}
+          trackingVideoFile={trackingVideoFile}
+          displayVideoMeta={displayVideoMeta}
+          trackingVideoMeta={trackingVideoMeta}
+          onSelectDisplayVideo={handleSelectDisplayVideo}
+          onSelectTrackingVideo={handleSelectTrackingVideo}
+          onStartAnalyzeVideo={handleStartAnalyzeVideo}
+          isAnalyzing={isAnalyzing}
+          analysisProgress={analysisProgress}
+          analysisStatus={analysisStatus}
+          errorMessage={errorMessage}
         />
       ) : (
         <PerformanceScreen
+          inputMode={inputMode}
           config={config}
-          videoStream={videoStream}
-          isVirtualCamera={isVirtualCamera}
-          onEditSetup={handleEditSetup}
           onUpdateConfig={handleUpdateConfig}
-          onSwitchToCamera={() => handleStartPerformance(false)}
-          onSwitchToDemo={() => handleStartPerformance(true)}
+          onBackToSetup={handleBackToSetup}
+          cameraStream={cameraStream}
+          displayVideoUrl={displayVideoUrl}
+          gestureEvents={gestureEvents}
+          onUpdateGestureEvents={setGestureEvents}
+          analysisFrames={analysisFrames}
+          onReanalyze={handleReanalyze}
         />
       )}
     </div>

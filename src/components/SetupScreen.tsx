@@ -1,667 +1,621 @@
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  FingercontrolConfig,
-  Finger,
-  LeftSlot,
-  RightSlot,
-  EffectId,
-  EFFECT_LIBRARY,
-  AudioMode,
-} from '../types/config';
+import React, { useRef, useState } from 'react';
+import { FingercontrolConfig, ContentSlot, Finger, Hand } from '../types/config';
 import { audioManager } from '../utils/audio';
-import {
-  Camera,
-  Sliders,
-  Volume2,
-  VolumeX,
-  Eye,
-  EyeOff,
-  Play,
-  Square,
-  Upload,
-  Sparkles,
-  ArrowRight,
-  RefreshCw,
-  Layers,
-  HelpCircle,
-} from 'lucide-react';
+import { Play, Square, X, Upload, Video, Camera, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
 
 interface SetupScreenProps {
   config: FingercontrolConfig;
-  onUpdateConfig: (config: FingercontrolConfig) => void;
-  onStartPerformance: () => void;
-  onStartDemoPerformance: () => void;
-  isLoading: boolean;
-  loadingMessage: string;
-  errorMessage: string | null;
+  onUpdateConfig: (newConfig: FingercontrolConfig) => void;
+  inputMode: 'CAMERA' | 'UPLOAD_VIDEO';
+  onChangeInputMode: (mode: 'CAMERA' | 'UPLOAD_VIDEO') => void;
+  // Camera state
   videoDevices: MediaDeviceInfo[];
   selectedDeviceId: string;
   onSelectDeviceId: (id: string) => void;
+  onStartCamera: () => void;
+  // Upload video state
+  displayVideoFile: File | null;
+  trackingVideoFile: File | null;
+  displayVideoMeta: { duration: number; width: number; height: number } | null;
+  trackingVideoMeta: { duration: number; width: number; height: number } | null;
+  onSelectDisplayVideo: (file: File) => void;
+  onSelectTrackingVideo: (file: File | null) => void;
+  onStartAnalyzeVideo: () => void;
+  // Loading & Progress
+  isAnalyzing: boolean;
+  analysisProgress: number;
+  analysisStatus: string;
+  errorMessage: string | null;
 }
 
-const FINGERS: { id: Finger; label: string }[] = [
-  { id: 'index', label: 'INDEX' },
-  { id: 'middle', label: 'MIDDLE' },
-  { id: 'ring', label: 'RING' },
-  { id: 'pinky', label: 'PINKY' },
-];
+const FINGERS: Finger[] = ['index', 'middle', 'ring', 'pinky'];
 
 export const SetupScreen: React.FC<SetupScreenProps> = ({
   config,
   onUpdateConfig,
-  onStartPerformance,
-  onStartDemoPerformance,
-  isLoading,
-  loadingMessage,
-  errorMessage,
+  inputMode,
+  onChangeInputMode,
   videoDevices,
   selectedDeviceId,
   onSelectDeviceId,
+  onStartCamera,
+  displayVideoFile,
+  trackingVideoFile,
+  displayVideoMeta,
+  trackingVideoMeta,
+  onSelectDisplayVideo,
+  onSelectTrackingVideo,
+  onStartAnalyzeVideo,
+  isAnalyzing,
+  analysisProgress,
+  analysisStatus,
+  errorMessage,
 }) => {
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [previewingAudioSlot, setPreviewingAudioSlot] = useState<string | null>(null);
-  const [previewingEffect, setPreviewingEffect] = useState<EffectId | null>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const previewAnimRef = useRef<number | null>(null);
+  const [playingSlotId, setPlayingSlotId] = useState<string | null>(null);
+  const displayFileInputRef = useRef<HTMLInputElement | null>(null);
+  const trackingFileInputRef = useRef<HTMLInputElement | null>(null);
+  const audioInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  useEffect(() => {
-    const updateVoices = () => {
-      setVoices(audioManager.getVoices());
+  // Slot helper
+  const getSlot = (hand: Hand, finger: Finger): ContentSlot => {
+    const found = config.slots.find((s) => s.hand === hand && s.finger === finger);
+    if (found) return found;
+    return {
+      id: `${hand}-${finger}`,
+      hand,
+      finger,
+      enabled: true,
+      text: finger.toUpperCase(),
     };
-    updateVoices();
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.onvoiceschanged = updateVoices;
-    }
-  }, []);
-
-  // Left Slot Finger Change (Collision resolution)
-  const handleLeftFingerChange = (slotIndex: number, newFinger: Finger) => {
-    const currentSlots = [...config.leftSlots];
-    const targetSlot = currentSlots[slotIndex];
-    const oldFinger = targetSlot.finger;
-
-    // Check if another slot has this finger; if so, swap
-    const collisionIndex = currentSlots.findIndex((s, idx) => idx !== slotIndex && s.finger === newFinger);
-    if (collisionIndex >= 0) {
-      currentSlots[collisionIndex] = {
-        ...currentSlots[collisionIndex],
-        finger: oldFinger,
-      };
-    }
-
-    currentSlots[slotIndex] = {
-      ...targetSlot,
-      finger: newFinger,
-    };
-
-    onUpdateConfig({
-      ...config,
-      leftSlots: currentSlots,
-    });
   };
 
-  // Right Slot Finger Change (Collision resolution)
-  const handleRightFingerChange = (slotIndex: number, newFinger: Finger) => {
-    const currentSlots = [...config.rightSlots];
-    const targetSlot = currentSlots[slotIndex];
-    const oldFinger = targetSlot.finger;
-
-    const collisionIndex = currentSlots.findIndex((s, idx) => idx !== slotIndex && s.finger === newFinger);
-    if (collisionIndex >= 0) {
-      currentSlots[collisionIndex] = {
-        ...currentSlots[collisionIndex],
-        finger: oldFinger,
-      };
-    }
-
-    currentSlots[slotIndex] = {
-      ...targetSlot,
-      finger: newFinger,
-    };
-
-    onUpdateConfig({
-      ...config,
-      rightSlots: currentSlots,
-    });
-  };
-
-  const updateLeftSlot = (index: number, updates: Partial<LeftSlot>) => {
-    const newSlots = [...config.leftSlots];
-    newSlots[index] = { ...newSlots[index], ...updates };
-    onUpdateConfig({ ...config, leftSlots: newSlots });
-  };
-
-  const updateRightSlot = (index: number, updates: Partial<RightSlot>) => {
-    const newSlots = [...config.rightSlots];
-    newSlots[index] = { ...newSlots[index], ...updates };
-    onUpdateConfig({ ...config, rightSlots: newSlots });
-  };
-
-  // Audio Preview
-  const handleTestAudio = async (slot: LeftSlot) => {
-    if (previewingAudioSlot === slot.id) {
-      audioManager.stopAudio();
-      setPreviewingAudioSlot(null);
-      return;
-    }
-
-    setPreviewingAudioSlot(slot.id);
-    if (slot.audioMode === 'tts') {
-      await audioManager.speakText(slot.text || 'TEST AUDIO', {
-        voiceURI: slot.ttsVoice,
-        rate: slot.ttsRate,
-        volume: slot.ttsVolume,
-      });
-    } else if (slot.audioMode === 'file' && slot.audioDataUrl) {
-      await audioManager.playAudioFile(slot.audioDataUrl, slot.ttsVolume);
-    }
-    setPreviewingAudioSlot(null);
-  };
-
-  // File Upload
-  const handleFileUpload = (index: number, e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      updateLeftSlot(index, {
-        audioFileName: file.name,
-        audioDataUrl: dataUrl,
-        audioMode: 'file',
-      });
-    };
-    reader.readAsDataURL(file);
-  };
-
-  // Live Effect Preview Canvas
-  useEffect(() => {
-    if (!previewingEffect || !previewCanvasRef.current) {
-      if (previewAnimRef.current) cancelAnimationFrame(previewAnimRef.current);
-      return;
-    }
-
-    const canvas = previewCanvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let frame = 0;
-    const renderPreview = () => {
-      frame++;
-      const w = canvas.width;
-      const h = canvas.height;
-
-      ctx.fillStyle = '#0a0a0a';
-      ctx.fillRect(0, 0, w, h);
-
-      // Draw synthetic preview performer silhouette & effect animation
-      ctx.save();
-      const cx = w / 2;
-      const cy = h / 2;
-
-      // Silhouette
-      ctx.fillStyle = '#2a2a2a';
-      ctx.beginPath();
-      ctx.arc(cx, cy - 30, 28, 0, Math.PI * 2); // head
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(cx, cy + 50, 45, 60, 0, 0, Math.PI * 2); // torso
-      ctx.fill();
-
-      // Effect specific preview
-      if (previewingEffect === 'particle-disassembly') {
-        ctx.fillStyle = '#f0f0f0';
-        for (let i = 0; i < 200; i++) {
-          const angle = (i / 200) * Math.PI * 2 + frame * 0.03;
-          const r = Math.sin(frame * 0.05 + i) * 60 + 20;
-          ctx.fillRect(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r, 2, 2);
-        }
-      } else if (previewingEffect === 'ascii-dither') {
-        ctx.font = '10px monospace';
-        ctx.fillStyle = '#e0e0e0';
-        const chars = '@%#*+=-:. ';
-        for (let y = 10; y < h; y += 12) {
-          for (let x = 10; x < w; x += 10) {
-            const ch = chars[(x + y + frame) % chars.length];
-            ctx.fillText(ch, x, y);
-          }
-        }
-      } else if (previewingEffect === 'rgb-time-echo') {
-        const offset = Math.sin(frame * 0.08) * 15;
-        ctx.strokeStyle = 'rgba(255, 50, 50, 0.7)';
-        ctx.strokeRect(cx - 35 - offset, cy - 45, 70, 90);
-        ctx.strokeStyle = 'rgba(50, 255, 50, 0.7)';
-        ctx.strokeRect(cx - 35, cy - 45, 70, 90);
-        ctx.strokeStyle = 'rgba(50, 100, 255, 0.7)';
-        ctx.strokeRect(cx - 35 + offset, cy - 45, 70, 90);
-      } else if (previewingEffect === 'glyph-dissolve') {
-        ctx.font = '9px monospace';
-        ctx.fillStyle = '#f0f0f0';
-        for (let i = 0; i < 40; i++) {
-          const x = cx + Math.sin(frame * 0.04 + i) * 50;
-          const y = cy + ((frame * 2 + i * 15) % h) - h / 2;
-          ctx.fillText('01'[i % 2], x, y);
-        }
-      } else if (previewingEffect === 'data-slice') {
-        for (let i = 0; i < 8; i++) {
-          const sy = i * 20;
-          const shift = Math.sin(frame * 0.1 + i * 2) * 25;
-          ctx.fillStyle = 'rgba(240, 240, 240, 0.6)';
-          ctx.fillRect(cx - 40 + shift, sy, 80, 14);
-        }
-      } else {
-        // Dot matrix / dither / distortion default
-        ctx.fillStyle = '#e0e0e0';
-        for (let y = 10; y < h; y += 10) {
-          for (let x = 10; x < w; x += 10) {
-            const dist = Math.hypot(x - cx, y - cy);
-            if (dist < 60) {
-              const r = Math.max(1, 4 * Math.sin(frame * 0.05 + dist * 0.1));
-              ctx.beginPath();
-              ctx.arc(x, y, r, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-        }
+  const updateSlot = (hand: Hand, finger: Finger, updates: Partial<ContentSlot>) => {
+    const newSlots = config.slots.map((slot) => {
+      if (slot.hand === hand && slot.finger === finger) {
+        return { ...slot, ...updates };
       }
+      return slot;
+    });
+    onUpdateConfig({ ...config, slots: newSlots });
+  };
 
-      ctx.restore();
-      previewAnimRef.current = requestAnimationFrame(renderPreview);
-    };
+  // Audio file handler
+  const handleAudioUpload = async (hand: Hand, finger: Finger, file: File) => {
+    try {
+      const buffer = await audioManager.decodeAudioFile(file);
+      updateSlot(hand, finger, {
+        audioFile: file,
+        audioFileName: file.name,
+        audioBuffer: buffer,
+      });
+    } catch (e) {
+      console.warn('Failed to decode audio file:', e);
+      alert('Could not decode this audio file. Please use standard WAV, MP3, M4A, or AAC.');
+    }
+  };
 
-    previewAnimRef.current = requestAnimationFrame(renderPreview);
+  const handleRemoveAudio = (hand: Hand, finger: Finger) => {
+    const slotId = `${hand}-${finger}`;
+    if (playingSlotId === slotId) {
+      audioManager.stopPreview();
+      setPlayingSlotId(null);
+    }
+    updateSlot(hand, finger, {
+      audioFile: undefined,
+      audioFileName: undefined,
+      audioBuffer: undefined,
+    });
+  };
 
-    return () => {
-      if (previewAnimRef.current) cancelAnimationFrame(previewAnimRef.current);
-    };
-  }, [previewingEffect]);
+  const handleTogglePreview = (slot: ContentSlot) => {
+    if (playingSlotId === slot.id) {
+      audioManager.stopPreview();
+      setPlayingSlotId(null);
+    } else if (slot.audioBuffer) {
+      setPlayingSlotId(slot.id);
+      audioManager.playBuffer(slot.audioBuffer, () => {
+        setPlayingSlotId(null);
+      });
+    }
+  };
+
+  // Validation between display and tracking video
+  const getTrackingVideoMismatchWarning = (): string | null => {
+    if (!displayVideoMeta || !trackingVideoMeta) return null;
+    const durDiff = Math.abs(displayVideoMeta.duration - trackingVideoMeta.duration);
+    if (durDiff > 0.1) {
+      return `Duration mismatch: ${displayVideoMeta.duration.toFixed(2)}s vs ${trackingVideoMeta.duration.toFixed(2)}s (diff > 100ms)`;
+    }
+    const displayAspect = displayVideoMeta.width / displayVideoMeta.height;
+    const trackingAspect = trackingVideoMeta.width / trackingVideoMeta.height;
+    if (Math.abs(displayAspect - trackingAspect) > 0.05) {
+      return `Aspect ratio mismatch: ${displayVideoMeta.width}x${displayVideoMeta.height} vs ${trackingVideoMeta.width}x${trackingVideoMeta.height}`;
+    }
+    return null;
+  };
+
+  const trackingMismatch = getTrackingVideoMismatchWarning();
 
   return (
-    <div className="min-h-screen bg-[#080808] text-[#e0e0e0] flex flex-col font-mono selection:bg-[#ff3333] selection:text-white">
-      {/* Top Header */}
-      <header className="border-b border-[#222222] bg-[#0c0c0c] px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-2.5 h-2.5 bg-[#ff3333] rounded-full animate-pulse shadow-[0_0_8px_#ff3333]" />
-          <div>
-            <h1 className="text-base font-bold tracking-widest uppercase text-white flex items-center gap-2">
-              fingercontrol <span className="text-xs font-normal text-[#888888]">v1.0 // CONTROL SETUP</span>
-            </h1>
-            <p className="text-xs text-[#777777] tracking-tight">Real-Time Fingertip Visual & Sound Controller</p>
-          </div>
+    <div className="min-h-screen bg-[#07111F] text-[#E0E6ED] flex flex-col justify-center items-center px-4 py-8 font-mono select-none">
+      <div className="w-full max-w-4xl flex flex-col space-y-6">
+        
+        {/* Header */}
+        <div className="text-center space-y-1.5">
+          <h1 className="text-2xl font-bold tracking-widest text-white uppercase flex items-center justify-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#FF0000] inline-block animate-pulse"></span>
+            fingercontrol
+          </h1>
+          <p className="text-xs text-[#8A9BA8] tracking-wider uppercase">
+            Two-Hand Fingertip & Pinch Synthesizer // Gesture Speech Overlay
+          </p>
         </div>
 
-        {/* Global Toggles & Camera Select */}
-        <div className="flex flex-wrap items-center gap-4 text-xs">
-          {videoDevices.length > 1 && (
-            <div className="flex items-center gap-2 bg-[#141414] border border-[#2a2a2a] px-2.5 py-1.5 rounded">
-              <Camera className="w-3.5 h-3.5 text-[#888888]" />
-              <select
-                value={selectedDeviceId}
-                onChange={(e) => onSelectDeviceId(e.target.value)}
-                className="bg-transparent text-[#cccccc] focus:outline-none cursor-pointer"
-              >
-                {videoDevices.map((dev, i) => (
-                  <option key={dev.deviceId || i} value={dev.deviceId} className="bg-[#181818] text-white">
-                    {dev.label || `Camera ${i + 1}`}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <button
-            onClick={() => onUpdateConfig({ ...config, soundEnabled: !config.soundEnabled })}
-            className={`flex items-center gap-1.5 px-3 py-1.5 border rounded transition-colors ${
-              config.soundEnabled
-                ? 'border-[#ff3333]/50 bg-[#ff3333]/10 text-white'
-                : 'border-[#333333] text-[#777777] bg-[#141414]'
-            }`}
-          >
-            {config.soundEnabled ? <Volume2 className="w-3.5 h-3.5 text-[#ff3333]" /> : <VolumeX className="w-3.5 h-3.5" />}
-            <span>AUDIO: {config.soundEnabled ? 'ON' : 'MUTE'}</span>
-          </button>
-
-          <button
-            onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
-            className={`flex items-center gap-1.5 px-3 py-1.5 border rounded transition-colors ${
-              config.trackingVisible
-                ? 'border-[#ff3333]/50 bg-[#ff3333]/10 text-white'
-                : 'border-[#333333] text-[#777777] bg-[#141414]'
-            }`}
-          >
-            {config.trackingVisible ? <Eye className="w-3.5 h-3.5 text-[#ff3333]" /> : <EyeOff className="w-3.5 h-3.5" />}
-            <span>TRACKING PTS: {config.trackingVisible ? 'ON' : 'OFF'}</span>
-          </button>
-        </div>
-      </header>
-
-      {/* Main 2-Column Grid */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* LEFT COLUMN: Left Hand Content & Audio */}
-        <section className="bg-[#0e0e0e] border border-[#222222] p-5 rounded-sm flex flex-col gap-4">
-          <div className="flex items-center justify-between border-b border-[#222222] pb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#ff3333] rounded-full" />
-              <h2 className="text-sm font-semibold tracking-wider text-white">LEFT HAND // TEXT & SOUND SLOTS</h2>
-            </div>
-            <span className="text-[11px] text-[#777777]">THUMB + PINCH FINGER</span>
-          </div>
-
-          <div className="space-y-4">
-            {config.leftSlots.map((slot, index) => (
-              <div
-                key={slot.id}
-                className={`border p-4 transition-colors ${
-                  slot.enabled ? 'border-[#2c2c2c] bg-[#121212]' : 'border-[#1a1a1a] bg-[#0a0a0a] opacity-50'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={slot.enabled}
-                      onChange={(e) => updateLeftSlot(index, { enabled: e.target.checked })}
-                      className="accent-[#ff3333] cursor-pointer w-4 h-4"
-                    />
-                    <span className="text-xs font-bold text-[#aaaaaa]">SLOT 0{index + 1}</span>
-                  </div>
-
-                  {/* Finger Selector */}
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-[#666666]">FINGER:</span>
-                    <select
-                      value={slot.finger}
-                      onChange={(e) => handleLeftFingerChange(index, e.target.value as Finger)}
-                      className="bg-[#181818] border border-[#333333] text-white px-2 py-0.5 rounded text-xs focus:border-[#ff3333] focus:outline-none"
-                    >
-                      {FINGERS.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Text Content Input */}
-                <div className="mb-3">
-                  <label className="block text-[11px] text-[#777777] uppercase mb-1">Overlay Typography</label>
-                  <input
-                    type="text"
-                    value={slot.text}
-                    onChange={(e) => updateLeftSlot(index, { text: e.target.value })}
-                    placeholder={`TEXT 0${index + 1}`}
-                    className="w-full bg-[#181818] border border-[#2a2a2a] text-white px-3 py-1.5 text-xs focus:border-[#ff3333] focus:outline-none rounded font-mono"
-                  />
-                </div>
-
-                {/* Audio Mode Select & Controls */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-[#1c1c1c] text-xs">
-                  <div>
-                    <label className="block text-[11px] text-[#777777] uppercase mb-1">Sound Mode</label>
-                    <div className="flex rounded border border-[#2a2a2a] overflow-hidden bg-[#161616]">
-                      {(['off', 'tts', 'file'] as AudioMode[]).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          onClick={() => updateLeftSlot(index, { audioMode: mode })}
-                          className={`flex-1 py-1 text-[11px] font-medium transition-colors ${
-                            slot.audioMode === mode
-                              ? 'bg-[#ff3333] text-white'
-                              : 'text-[#888888] hover:text-[#cccccc]'
-                          }`}
-                        >
-                          {mode.toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Audio Controls & Preview */}
-                  <div className="flex items-end gap-2">
-                    {slot.audioMode === 'tts' && (
-                      <>
-                        <div className="flex-1">
-                          <label className="block text-[10px] text-[#777777] uppercase mb-1">
-                            Rate: {slot.ttsRate.toFixed(1)}x
-                          </label>
-                          <input
-                            type="range"
-                            min="0.5"
-                            max="2.0"
-                            step="0.1"
-                            value={slot.ttsRate}
-                            onChange={(e) => updateLeftSlot(index, { ttsRate: parseFloat(e.target.value) })}
-                            className="w-full accent-[#ff3333] h-1.5 bg-[#2a2a2a] rounded cursor-pointer"
-                          />
-                        </div>
-                        <button
-                          onClick={() => handleTestAudio(slot)}
-                          className="px-2.5 py-1.5 bg-[#202020] hover:bg-[#282828] border border-[#333333] text-white rounded text-[11px] flex items-center gap-1 transition-colors"
-                          title="Preview Speech TTS"
-                        >
-                          {previewingAudioSlot === slot.id ? (
-                            <Square className="w-3 h-3 text-[#ff3333]" />
-                          ) : (
-                            <Play className="w-3 h-3 text-[#ff3333]" />
-                          )}
-                          <span>TEST</span>
-                        </button>
-                      </>
-                    )}
-
-                    {slot.audioMode === 'file' && (
-                      <div className="flex-1 flex items-center gap-2">
-                        <label className="flex-1 cursor-pointer bg-[#202020] hover:bg-[#282828] border border-[#333333] text-[11px] text-[#cccccc] px-2.5 py-1.5 rounded flex items-center justify-center gap-1 overflow-hidden truncate">
-                          <Upload className="w-3 h-3 text-[#888888]" />
-                          <span className="truncate">{slot.audioFileName || 'CHOOSE FILE'}</span>
-                          <input
-                            type="file"
-                            accept="audio/*"
-                            onChange={(e) => handleFileUpload(index, e)}
-                            className="hidden"
-                          />
-                        </label>
-                        {slot.audioDataUrl && (
-                          <button
-                            onClick={() => handleTestAudio(slot)}
-                            className="px-2.5 py-1.5 bg-[#202020] hover:bg-[#282828] border border-[#333333] text-white rounded text-[11px]"
-                          >
-                            <Play className="w-3 h-3 text-[#ff3333]" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {slot.audioMode === 'off' && (
-                      <div className="text-[11px] text-[#555555] italic flex items-center h-8">
-                        No audio triggered for this gesture
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* RIGHT COLUMN: Right Hand Visual Effects Mapping */}
-        <section className="bg-[#0e0e0e] border border-[#222222] p-5 rounded-sm flex flex-col gap-4">
-          <div className="flex items-center justify-between border-b border-[#222222] pb-3">
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-[#ff3333] rounded-full" />
-              <h2 className="text-sm font-semibold tracking-wider text-white">RIGHT HAND // FIXED EFFECT LIBRARY</h2>
-            </div>
-            <span className="text-[11px] text-[#777777]">FIXED SHADER PRESETS</span>
-          </div>
-
-          <div className="space-y-4">
-            {config.rightSlots.map((slot, index) => {
-              const currentMeta = EFFECT_LIBRARY.find((e) => e.id === slot.effectId);
-              return (
-                <div
-                  key={slot.id}
-                  className={`border p-4 transition-colors ${
-                    slot.enabled ? 'border-[#2c2c2c] bg-[#121212]' : 'border-[#1a1a1a] bg-[#0a0a0a] opacity-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="checkbox"
-                        checked={slot.enabled}
-                        onChange={(e) => updateRightSlot(index, { enabled: e.target.checked })}
-                        className="accent-[#ff3333] cursor-pointer w-4 h-4"
-                      />
-                      <span className="text-xs font-bold text-[#aaaaaa]">SLOT 0{index + 1}</span>
-                    </div>
-
-                    {/* Finger Selector */}
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <span className="text-[#666666]">FINGER:</span>
-                      <select
-                        value={slot.finger}
-                        onChange={(e) => handleRightFingerChange(index, e.target.value as Finger)}
-                        className="bg-[#181818] border border-[#333333] text-white px-2 py-0.5 rounded text-xs focus:border-[#ff3333] focus:outline-none"
-                      >
-                        {FINGERS.map((f) => (
-                          <option key={f.id} value={f.id}>
-                            {f.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Effect Dropdown Selector */}
-                  <div className="mb-2">
-                    <label className="block text-[11px] text-[#777777] uppercase mb-1">Assigned Effect</label>
-                    <select
-                      value={slot.effectId}
-                      onChange={(e) => updateRightSlot(index, { effectId: e.target.value as EffectId })}
-                      className="w-full bg-[#181818] border border-[#2a2a2a] text-white px-3 py-1.5 text-xs focus:border-[#ff3333] focus:outline-none rounded font-mono"
-                    >
-                      <optgroup label="MVP Production Presets">
-                        {EFFECT_LIBRARY.filter((e) => e.isMvp).map((eff) => (
-                          <option key={eff.id} value={eff.id}>
-                            {eff.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                      <optgroup label="Extended Fixed Presets">
-                        {EFFECT_LIBRARY.filter((e) => !e.isMvp).map((eff) => (
-                          <option key={eff.id} value={eff.id}>
-                            {eff.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    </select>
-                  </div>
-
-                  {/* Description & Preview Button */}
-                  <div className="flex items-center justify-between pt-2 border-t border-[#1c1c1c] text-[11px] text-[#888888] gap-3">
-                    <p className="flex-1 text-[11px] text-[#777777] line-clamp-1">{currentMeta?.description}</p>
-                    <button
-                      onClick={() =>
-                        setPreviewingEffect(previewingEffect === slot.effectId ? null : slot.effectId)
-                      }
-                      className={`px-2.5 py-1 border rounded text-[10px] font-mono flex items-center gap-1 transition-colors ${
-                        previewingEffect === slot.effectId
-                          ? 'border-[#ff3333] text-white bg-[#ff3333]/20'
-                          : 'border-[#333333] text-[#aaaaaa] hover:text-white bg-[#181818]'
-                      }`}
-                    >
-                      <Sparkles className="w-3 h-3 text-[#ff3333]" />
-                      <span>{previewingEffect === slot.effectId ? 'CLOSE PREVIEW' : '10s PREVIEW'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Live Preview Modal Frame */}
-          {previewingEffect && (
-            <div className="border border-[#ff3333]/40 bg-[#0a0a0a] p-3 rounded mt-2">
-              <div className="flex items-center justify-between text-xs mb-2">
-                <span className="text-[#ff3333] font-bold">PREVIEW // {previewingEffect.toUpperCase()}</span>
-                <span className="text-[10px] text-[#666666]">Parameters fixed by design</span>
-              </div>
-              <canvas
-                ref={previewCanvasRef}
-                width={380}
-                height={160}
-                className="w-full h-36 bg-[#060606] rounded border border-[#222222]"
-              />
-            </div>
-          )}
-
-          {/* Explicit note per SPEC Section 4.3 */}
-          <div className="mt-auto p-3 bg-[#0a0a0a] border border-[#1c1c1c] rounded text-[11px] text-[#666666] flex items-start gap-2">
-            <HelpCircle className="w-4 h-4 text-[#ff3333] shrink-0 mt-0.5" />
-            <span>
-              <strong>Fixed Shader Design:</strong> Visual effects are tuned in source code for high-framerate performance. Per SPEC, internal parameters (particles, shaders, recovery curves) are locked to maintain reliable video recording aesthetics.
-            </span>
-          </div>
-        </section>
-      </main>
-
-      {/* Error Banner if any */}
-      {errorMessage && (
-        <div className="max-w-7xl mx-auto px-6 mb-4 w-full">
-          <div className="p-3.5 bg-[#2d0f0f] border border-[#ff3333] text-[#ff8888] text-xs rounded flex flex-col sm:flex-row items-center justify-between gap-3">
-            <span>{errorMessage}</span>
+        {/* Input Mode Selector */}
+        <div className="flex justify-center">
+          <div className="inline-flex rounded border border-[#1E2E42] bg-[#0C1929] p-1 gap-1">
             <button
-              onClick={onStartDemoPerformance}
-              className="px-3 py-1.5 bg-[#ff3333] hover:bg-[#ff1a1a] text-white font-bold rounded cursor-pointer shrink-0"
+              onClick={() => onChangeInputMode('CAMERA')}
+              className={`px-5 py-2 text-xs font-semibold uppercase tracking-wider rounded transition-colors flex items-center gap-2 ${
+                inputMode === 'CAMERA'
+                  ? 'bg-[#1D3557] text-white shadow-sm'
+                  : 'text-[#8A9BA8] hover:text-white'
+              }`}
             >
-              LAUNCH VIRTUAL STUDIO NOW &rarr;
+              <Camera className="w-3.5 h-3.5" />
+              CAMERA
+            </button>
+            <button
+              onClick={() => onChangeInputMode('UPLOAD_VIDEO')}
+              className={`px-5 py-2 text-xs font-semibold uppercase tracking-wider rounded transition-colors flex items-center gap-2 ${
+                inputMode === 'UPLOAD_VIDEO'
+                  ? 'bg-[#1D3557] text-white shadow-sm'
+                  : 'text-[#8A9BA8] hover:text-white'
+              }`}
+            >
+              <Video className="w-3.5 h-3.5" />
+              UPLOAD VIDEO
             </button>
           </div>
         </div>
-      )}
 
-      {/* Bottom Action Sticky Footer */}
-      <footer className="sticky bottom-0 z-30 border-t border-[#222222] bg-[#0c0c0c]/95 backdrop-blur-md px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-[0_-5px_20px_rgba(0,0,0,0.8)]">
-        <div className="text-xs text-[#666666] flex items-center gap-2">
-          <span>Jean Studio Performance Pipeline</span>
-          <span>&bull;</span>
-          <span>Camera Vision &amp; Virtual Simulator</span>
+        {/* Mode Specific Configuration Bar */}
+        <div className="bg-[#0C1929] border border-[#1E2E42] rounded-md p-4 space-y-3">
+          {inputMode === 'CAMERA' ? (
+            <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
+              <div className="flex items-center gap-3">
+                <span className="text-[#8A9BA8] uppercase text-[11px]">CAMERA DEVICE:</span>
+                <select
+                  value={selectedDeviceId}
+                  onChange={(e) => onSelectDeviceId(e.target.value)}
+                  className="bg-[#07111F] border border-[#1E2E42] text-white text-xs rounded px-3 py-1.5 focus:outline-none focus:border-[#FF0000]"
+                >
+                  {videoDevices.length === 0 ? (
+                    <option value="">Default Webcam</option>
+                  ) : (
+                    videoDevices.map((dev, idx) => (
+                      <option key={dev.deviceId || idx} value={dev.deviceId}>
+                        {dev.label || `Camera ${idx + 1}`}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-6">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.mirroredVideo}
+                    onChange={(e) => onUpdateConfig({ ...config, mirroredVideo: e.target.checked })}
+                    className="accent-[#FF0000] cursor-pointer"
+                  />
+                  <span className="text-[#C5D1DE] text-xs uppercase">MIRRORED</span>
+                </label>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={config.trackingVisible}
+                    onChange={(e) => onUpdateConfig({ ...config, trackingVisible: e.target.checked })}
+                    className="accent-[#FF0000] cursor-pointer"
+                  />
+                  <span className="text-[#C5D1DE] text-xs uppercase">SHOW TRACKING</span>
+                </label>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 text-xs">
+              {/* Upload row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Display Video (Required) */}
+                <div className="border border-[#1E2E42] bg-[#07111F] p-3 rounded flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-semibold text-white uppercase text-[11px] flex items-center gap-1.5">
+                        <Video className="w-3.5 h-3.5 text-[#FF0000]" />
+                        DISPLAY VIDEO (REQUIRED)
+                      </span>
+                      {displayVideoFile && (
+                        <span className="text-[10px] text-emerald-400 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" /> READY
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-[#8A9BA8] mb-2">
+                      Local browser-decodable video for preview & export.
+                    </p>
+                  </div>
+
+                  {displayVideoFile ? (
+                    <div className="flex items-center justify-between bg-[#0C1929] border border-[#1E2E42] px-2.5 py-1.5 rounded">
+                      <div className="truncate mr-2">
+                        <div className="text-white text-xs truncate font-medium">{displayVideoFile.name}</div>
+                        {displayVideoMeta && (
+                          <div className="text-[10px] text-[#8A9BA8]">
+                            {displayVideoMeta.duration.toFixed(1)}s • {displayVideoMeta.width}x{displayVideoMeta.height}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => displayFileInputRef.current?.click()}
+                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0"
+                      >
+                        REPLACE
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => displayFileInputRef.current?.click()}
+                      className="w-full py-2.5 border border-dashed border-[#2A4365] hover:border-[#FF0000] text-[#A0AEC0] hover:text-white rounded text-center transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      SELECT DISPLAY VIDEO
+                    </button>
+                  )}
+                  <input
+                    ref={displayFileInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) onSelectDisplayVideo(file);
+                    }}
+                  />
+                </div>
+
+                {/* Clean Tracking Video (Optional) */}
+                <div className="border border-[#1E2E42] bg-[#07111F] p-3 rounded flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="font-semibold text-[#CBD5E1] uppercase text-[11px]">
+                        CLEAN TRACKING VIDEO (OPTIONAL)
+                      </span>
+                      {trackingVideoFile && (
+                        <button
+                          onClick={() => onSelectTrackingVideo(null)}
+                          className="text-[10px] text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1"
+                        >
+                          <X className="w-3 h-3" /> REMOVE
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-[#8A9BA8] mb-2">
+                      Use if display video is heavily stylized/distorted.
+                    </p>
+                  </div>
+
+                  {trackingVideoFile ? (
+                    <div className="flex items-center justify-between bg-[#0C1929] border border-[#1E2E42] px-2.5 py-1.5 rounded">
+                      <div className="truncate mr-2">
+                        <div className="text-white text-xs truncate font-medium">{trackingVideoFile.name}</div>
+                        {trackingVideoMeta && (
+                          <div className="text-[10px] text-[#8A9BA8]">
+                            {trackingVideoMeta.duration.toFixed(1)}s • {trackingVideoMeta.width}x{trackingVideoMeta.height}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => trackingFileInputRef.current?.click()}
+                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0"
+                      >
+                        REPLACE
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => trackingFileInputRef.current?.click()}
+                      className="w-full py-2.5 border border-dashed border-[#1E2E42] hover:border-[#2A4365] text-[#718096] hover:text-[#CBD5E1] rounded text-center transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                      SELECT TRACKING VIDEO
+                    </button>
+                  )}
+                  <input
+                    ref={trackingFileInputRef}
+                    type="file"
+                    accept="video/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) onSelectTrackingVideo(file);
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Warnings or Video Config */}
+              <div className="flex flex-wrap items-center justify-between pt-1 text-xs border-t border-[#1E2E42]/60">
+                <div className="flex items-center gap-6">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.mirroredVideo}
+                      onChange={(e) => onUpdateConfig({ ...config, mirroredVideo: e.target.checked })}
+                      className="accent-[#FF0000] cursor-pointer"
+                    />
+                    <span className="text-[#C5D1DE] text-xs uppercase">MIRRORED VIDEO</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={config.trackingVisible}
+                      onChange={(e) => onUpdateConfig({ ...config, trackingVisible: e.target.checked })}
+                      className="accent-[#FF0000] cursor-pointer"
+                    />
+                    <span className="text-[#C5D1DE] text-xs uppercase">SHOW TRACKING</span>
+                  </label>
+                </div>
+
+                {trackingMismatch && (
+                  <div className="text-amber-400 text-[11px] flex items-center gap-1.5">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    {trackingMismatch}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          {/* Quick Demo Simulator launch */}
-          <button
-            onClick={onStartDemoPerformance}
-            disabled={isLoading}
-            className="flex-1 sm:flex-none px-4 py-2.5 bg-[#1a1a1a] hover:bg-[#262626] border border-[#333333] hover:border-[#666666] disabled:opacity-50 text-white text-xs font-bold tracking-wider uppercase rounded transition-colors flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <Sparkles className="w-4 h-4 text-[#ff3333]" />
-            <span>DEMO SIMULATOR (NO CAMERA)</span>
-          </button>
+        {/* Error Notification */}
+        {errorMessage && (
+          <div className="bg-[#2D1517] border border-[#FF0000]/40 text-[#FFA8A8] text-xs p-3 rounded flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-[#FF0000] shrink-0" />
+            <span>{errorMessage}</span>
+          </div>
+        )}
 
-          {/* Primary Camera Launch */}
-          <button
-            onClick={onStartPerformance}
-            disabled={isLoading}
-            className="flex-1 sm:flex-none px-6 py-2.5 bg-[#ff3333] hover:bg-[#ff1a1a] active:bg-[#d41818] disabled:opacity-50 text-white text-xs font-bold tracking-widest uppercase flex items-center justify-center gap-2 rounded transition-all shadow-[0_0_15px_rgba(255,51,51,0.4)] cursor-pointer"
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>{loadingMessage || 'STARTING...'}</span>
-              </>
-            ) : (
-              <>
-                <Camera className="w-4 h-4" />
-                <span>START WITH CAMERA</span>
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
-          </button>
+        {/* Side-by-side LEFT HAND and RIGHT HAND Panels */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          
+          {/* LEFT HAND PANEL */}
+          <div className="bg-[#0C1929] border border-[#1E2E42] rounded-md p-4 flex flex-col space-y-3">
+            <div className="flex items-center justify-between border-b border-[#1E2E42] pb-2">
+              <span className="font-bold text-white tracking-wider text-xs uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-[#FF0000] inline-block"></span>
+                LEFT HAND
+              </span>
+              <span className="text-[10px] text-[#8A9BA8] uppercase">THUMB + 4 FINGERS</span>
+            </div>
+
+            <div className="space-y-2.5">
+              {FINGERS.map((finger) => {
+                const slot = getSlot('left', finger);
+                const slotKey = `left-${finger}`;
+                const isPlaying = playingSlotId === slot.id;
+
+                return (
+                  <div
+                    key={slotKey}
+                    className="flex items-center gap-2 bg-[#07111F] border border-[#1E2E42] p-2 rounded"
+                  >
+                    {/* Finger Label */}
+                    <span className="w-16 text-[11px] font-semibold text-[#8A9BA8] uppercase shrink-0">
+                      {finger}
+                    </span>
+
+                    {/* Direct Text Input */}
+                    <input
+                      type="text"
+                      value={slot.text}
+                      onChange={(e) => updateSlot('left', finger, { text: e.target.value })}
+                      placeholder={finger.toUpperCase()}
+                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-2.5 py-1 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
+                    />
+
+                    {/* Audio Controls */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {slot.audioFile ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePreview(slot)}
+                            className={`p-1.5 rounded transition-colors ${
+                              isPlaying
+                                ? 'bg-[#FF0000] text-white'
+                                : 'bg-[#1D3557] hover:bg-[#2A4365] text-white'
+                            }`}
+                            title={isPlaying ? 'Stop Preview' : 'Play Preview'}
+                          >
+                            {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                          </button>
+                          <span
+                            className="max-w-[70px] text-[10px] text-[#8A9BA8] truncate"
+                            title={slot.audioFileName}
+                          >
+                            {slot.audioFileName}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAudio('left', finger)}
+                            className="p-1 text-[#8A9BA8] hover:text-[#FF0000] transition-colors"
+                            title="Remove Audio"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => audioInputRefs.current[slotKey]?.click()}
+                            className="px-2 py-1 bg-[#152336] hover:bg-[#1D3557] border border-[#1E2E42] text-[10px] text-[#A0AEC0] hover:text-white rounded uppercase transition-colors"
+                          >
+                            + AUDIO
+                          </button>
+                          <span className="text-[9px] text-[#4A5D73] px-1 uppercase">NO AUDIO</span>
+                        </>
+                      )}
+                      <input
+                        ref={(el) => { audioInputRefs.current[slotKey] = el; }}
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleAudioUpload('left', finger, file);
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* RIGHT HAND PANEL */}
+          <div className="bg-[#0C1929] border border-[#1E2E42] rounded-md p-4 flex flex-col space-y-3">
+            <div className="flex items-center justify-between border-b border-[#1E2E42] pb-2">
+              <span className="font-bold text-white tracking-wider text-xs uppercase flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-[#FF0000] inline-block"></span>
+                RIGHT HAND
+              </span>
+              <span className="text-[10px] text-[#8A9BA8] uppercase">THUMB + 4 FINGERS</span>
+            </div>
+
+            <div className="space-y-2.5">
+              {FINGERS.map((finger) => {
+                const slot = getSlot('right', finger);
+                const slotKey = `right-${finger}`;
+                const isPlaying = playingSlotId === slot.id;
+
+                return (
+                  <div
+                    key={slotKey}
+                    className="flex items-center gap-2 bg-[#07111F] border border-[#1E2E42] p-2 rounded"
+                  >
+                    {/* Finger Label */}
+                    <span className="w-16 text-[11px] font-semibold text-[#8A9BA8] uppercase shrink-0">
+                      {finger}
+                    </span>
+
+                    {/* Direct Text Input */}
+                    <input
+                      type="text"
+                      value={slot.text}
+                      onChange={(e) => updateSlot('right', finger, { text: e.target.value })}
+                      placeholder={finger.toUpperCase()}
+                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-2.5 py-1 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
+                    />
+
+                    {/* Audio Controls */}
+                    <div className="flex items-center gap-1 shrink-0">
+                      {slot.audioFile ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleTogglePreview(slot)}
+                            className={`p-1.5 rounded transition-colors ${
+                              isPlaying
+                                ? 'bg-[#FF0000] text-white'
+                                : 'bg-[#1D3557] hover:bg-[#2A4365] text-white'
+                            }`}
+                            title={isPlaying ? 'Stop Preview' : 'Play Preview'}
+                          >
+                            {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                          </button>
+                          <span
+                            className="max-w-[70px] text-[10px] text-[#8A9BA8] truncate"
+                            title={slot.audioFileName}
+                          >
+                            {slot.audioFileName}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAudio('right', finger)}
+                            className="p-1 text-[#8A9BA8] hover:text-[#FF0000] transition-colors"
+                            title="Remove Audio"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => audioInputRefs.current[slotKey]?.click()}
+                            className="px-2 py-1 bg-[#152336] hover:bg-[#1D3557] border border-[#1E2E42] text-[10px] text-[#A0AEC0] hover:text-white rounded uppercase transition-colors"
+                          >
+                            + AUDIO
+                          </button>
+                          <span className="text-[9px] text-[#4A5D73] px-1 uppercase">NO AUDIO</span>
+                        </>
+                      )}
+                      <input
+                        ref={(el) => { audioInputRefs.current[slotKey] = el; }}
+                        type="file"
+                        accept="audio/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleAudioUpload('right', finger, file);
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      </footer>
+
+        {/* Primary Bottom Action Button & Progress */}
+        <div className="pt-2 flex flex-col items-center">
+          {isAnalyzing ? (
+            <div className="w-full max-w-md space-y-2 text-center">
+              <div className="flex justify-between text-xs text-[#8A9BA8]">
+                <span className="flex items-center gap-1.5 text-white font-medium">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#FF0000]" />
+                  {analysisStatus || 'ANALYZING VIDEO...'}
+                </span>
+                <span className="font-bold text-white">{analysisProgress}%</span>
+              </div>
+              <div className="w-full h-2 bg-[#0C1929] border border-[#1E2E42] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-[#FF0000] transition-all duration-150"
+                  style={{ width: `${analysisProgress}%` }}
+                />
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={inputMode === 'CAMERA' ? onStartCamera : onStartAnalyzeVideo}
+              disabled={inputMode === 'UPLOAD_VIDEO' && (!displayVideoFile || !!trackingMismatch)}
+              className={`w-full max-w-md py-3.5 px-6 rounded font-bold text-sm tracking-widest uppercase transition-all shadow-md flex items-center justify-center gap-2 ${
+                inputMode === 'UPLOAD_VIDEO' && (!displayVideoFile || !!trackingMismatch)
+                  ? 'bg-[#152336] text-[#4A5D73] cursor-not-allowed border border-[#1E2E42]'
+                  : 'bg-[#FF0000] hover:bg-[#E60000] text-white hover:shadow-lg active:scale-[0.99] cursor-pointer'
+              }`}
+            >
+              {inputMode === 'CAMERA' ? 'START CAMERA →' : 'ANALYZE VIDEO →'}
+            </button>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 };

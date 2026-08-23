@@ -1,686 +1,796 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
   FingercontrolConfig,
-  HandType,
-  Finger,
-  FingertipPoint,
-  EFFECT_LIBRARY,
+  ContentSlot,
+  GestureEvent,
+  VideoAnalysisFrame,
+  Hand,
+  HandGestureData,
 } from '../types/config';
 import { gestureRecognizer } from '../vision/gestureRecognizer';
-import { visualRenderer } from '../renderer/visualRenderer';
+import { visualRenderer, VisualRenderer } from '../renderer/visualRenderer';
 import { audioManager } from '../utils/audio';
 import {
-  Sliders,
-  Camera,
+  ArrowLeft,
+  Play,
+  Pause,
+  Download,
   RotateCcw,
-  Maximize,
-  Minimize,
-  Volume2,
-  VolumeX,
+  Video as VideoIcon,
+  Circle,
   Eye,
   EyeOff,
-  Disc,
-  Hand,
-  Sparkles,
-  Video,
+  FlipHorizontal,
+  Trash2,
+  CheckCircle2,
+  Clock,
 } from 'lucide-react';
 
 interface PerformanceScreenProps {
+  inputMode: 'CAMERA' | 'UPLOAD_VIDEO';
   config: FingercontrolConfig;
-  videoStream: MediaStream | null;
-  isVirtualCamera?: boolean;
-  onEditSetup: () => void;
-  onUpdateConfig: (config: FingercontrolConfig) => void;
-  onSwitchToCamera?: () => void;
-  onSwitchToDemo?: () => void;
+  onUpdateConfig: (newConfig: FingercontrolConfig) => void;
+  onBackToSetup: () => void;
+  // Camera mode props
+  cameraStream: MediaStream | null;
+  // Video mode props
+  displayVideoUrl: string | null;
+  gestureEvents: GestureEvent[];
+  onUpdateGestureEvents: (events: GestureEvent[]) => void;
+  analysisFrames: VideoAnalysisFrame[];
+  onReanalyze: () => void;
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
+  inputMode,
   config,
-  videoStream,
-  isVirtualCamera = false,
-  onEditSetup,
   onUpdateConfig,
-  onSwitchToCamera,
-  onSwitchToDemo,
+  onBackToSetup,
+  cameraStream,
+  displayVideoUrl,
+  gestureEvents,
+  onUpdateGestureEvents,
+  analysisFrames,
+  onReanalyze,
 }) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  // Status & Telemetry state
-  const [fps, setFps] = useState<number>(60);
-  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
-  const [leftStateLabel, setLeftStateLabel] = useState<string>('IDLE');
-  const [rightStateLabel, setRightStateLabel] = useState<string>('IDLE');
-  const [activeRightEffectName, setActiveRightEffectName] = useState<string | null>(null);
+  // Playback state (for video mode)
+  const [isPlaying, setIsPlaying] = useState<boolean>(true);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
 
-  // Photo 3·2·1 countdown state
-  const [photoCountdown, setPhotoCountdown] = useState<number | null>(null);
-
-  // 15s Recording state
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [recSecondsLeft, setRecSecondsLeft] = useState<number>(15);
+  // Recording state (for camera mode)
+  const [isRecordingCamera, setIsRecordingCamera] = useState<boolean>(false);
+  const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-  const recTimerRef = useRef<number | null>(null);
 
-  // Mouse / Touch Gesture Trigger state (works seamlessly on desktop & mobile)
-  const [simFinger, setSimFinger] = useState<Finger>('index');
-  const simHandRef = useRef<{
-    active: boolean;
-    hand: HandType;
-    finger: Finger;
-    pos: FingertipPoint;
-  }>({
-    active: false,
-    hand: 'Left',
-    finger: 'index',
-    pos: { x: 0.3, y: 0.5 },
-  });
+  // Export state (for upload video mode)
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportProgress, setExportProgress] = useState<number>(0);
+  const [exportStatus, setExportStatus] = useState<string>('');
 
-  // Track active gestures for Left / Right
-  const activeLeftSlotIdRef = useRef<string | null>(null);
-  const activeRightEffectIdRef = useRef<string | null>(null);
-  const isRightEffectActiveRef = useRef<boolean>(false);
+  // Selected event in timeline (for inspection or deletion)
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
-  // Gesture Trigger Callback
-  const handleGestureTrigger = useCallback(
-    (hand: HandType, finger: Finger, pinchPos: FingertipPoint) => {
-      if (hand === 'Left') {
-        const slot = config.leftSlots.find((s) => s.finger === finger && s.enabled);
-        if (slot) {
-          activeLeftSlotIdRef.current = slot.id;
-          visualRenderer.spawnFloatingText(slot.id, slot.text || 'PERFORMANCE TEXT', pinchPos.x, pinchPos.y);
+  // Audio triggering tracker to avoid duplicate triggers during playback
+  const triggeredEventIdsRef = useRef<Set<string>>(new Set());
 
-          if (config.soundEnabled) {
-            audioManager.playFeedbackSound('activate');
-            if (slot.audioMode === 'tts') {
-              audioManager.speakText(slot.text, {
-                voiceURI: slot.ttsVoice,
-                rate: slot.ttsRate,
-                volume: slot.ttsVolume,
-              });
-            } else if (slot.audioMode === 'file' && slot.audioDataUrl) {
-              audioManager.playAudioFile(slot.audioDataUrl, slot.ttsVolume);
+  // Slot lookup
+  const getSlot = useCallback(
+    (hand: Hand, finger: string): ContentSlot | undefined => {
+      return config.slots.find((s) => s.hand === hand && s.finger === finger);
+    },
+    [config.slots]
+  );
+
+  // ==========================================
+  // CAMERA MODE LOOP
+  // ==========================================
+  useEffect(() => {
+    if (inputMode !== 'CAMERA') return;
+
+    const canvas = canvasRef.current;
+    const video = hiddenVideoRef.current;
+    if (!canvas || !video) return;
+
+    visualRenderer.init(canvas);
+    visualRenderer.reset();
+    gestureRecognizer.reset();
+
+    // Set real-time gesture triggers
+    gestureRecognizer.setCallbacks(
+      (hand, finger, pinchPos) => {
+        const slot = getSlot(hand, finger);
+        const text = slot?.text || finger.toUpperCase();
+        const slotId = `${hand}-${finger}`;
+
+        visualRenderer.spawnFloatingText(slotId, hand, text, pinchPos.x, pinchPos.y);
+
+        // Play real audio file if present
+        if (slot?.audioBuffer) {
+          audioManager.triggerAudio(slot.audioBuffer);
+        }
+      },
+      (hand, finger) => {
+        const slotId = `${hand}-${finger}`;
+        visualRenderer.releaseFloatingText(slotId);
+      }
+    );
+
+    let animationFrameId: number;
+
+    const renderLoop = (time: number) => {
+      if (video.readyState >= 2) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+        }
+
+        // Process hand landmarks & gestures
+        const gestureData = gestureRecognizer.processVideoFrame(video, time, config.mirroredVideo);
+
+        // Update target positions for active pinches
+        for (const handKey of ['left', 'right'] as Hand[]) {
+          const handData = gestureData[handKey];
+          if (handData.state === 'ACTIVE' && handData.activeFinger && handData.pinchCenter) {
+            const slotId = `${handKey}-${handData.activeFinger}`;
+            visualRenderer.updateFloatingTextTarget(slotId, handData.pinchCenter.x, handData.pinchCenter.y);
+          }
+        }
+
+        // Draw composite frame
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time);
+      }
+
+      animationFrameId = requestAnimationFrame(renderLoop);
+    };
+
+    animationFrameId = requestAnimationFrame(renderLoop);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      audioManager.stopAll();
+    };
+  }, [inputMode, config.mirroredVideo, config.trackingVisible, getSlot]);
+
+  // Set camera stream source
+  useEffect(() => {
+    if (inputMode === 'CAMERA' && hiddenVideoRef.current && cameraStream) {
+      hiddenVideoRef.current.srcObject = cameraStream;
+      hiddenVideoRef.current.play().catch(console.warn);
+    }
+  }, [inputMode, cameraStream]);
+
+  // Camera recording timer
+  useEffect(() => {
+    let timer: number;
+    if (isRecordingCamera) {
+      setRecordingSeconds(0);
+      timer = window.setInterval(() => {
+        setRecordingSeconds((s) => s + 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [isRecordingCamera]);
+
+  // Start Camera Recording
+  const handleStartCameraRecording = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const canvasStream = canvas.captureStream(30);
+    const audioStream = audioManager.getMediaStream();
+
+    const combinedTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+    if (audioStream) {
+      combinedTracks.push(...audioStream.getAudioTracks());
+    }
+
+    const combinedStream = new MediaStream(combinedTracks);
+
+    // Format selection
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+    }
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm';
+    }
+
+    recordedChunksRef.current = [];
+    const recorder = new MediaRecorder(combinedStream, { mimeType });
+
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        recordedChunksRef.current.push(e.data);
+      }
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `fingercontrol-camera-${Date.now()}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    recorder.start(250);
+    mediaRecorderRef.current = recorder;
+    setIsRecordingCamera(true);
+  };
+
+  // Stop Camera Recording
+  const handleStopCameraRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecordingCamera(false);
+  };
+
+  // ==========================================
+  // UPLOAD VIDEO MODE PLAYBACK & PREVIEW LOOP
+  // ==========================================
+  useEffect(() => {
+    if (inputMode !== 'UPLOAD_VIDEO') return;
+
+    const canvas = canvasRef.current;
+    const video = hiddenVideoRef.current;
+    if (!canvas || !video) return;
+
+    visualRenderer.init(canvas);
+    visualRenderer.reset();
+
+    let animationFrameId: number;
+
+    const previewLoop = (time: number) => {
+      if (video.readyState >= 2) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth || 1280;
+          canvas.height = video.videoHeight || 720;
+        }
+
+        const vTime = video.currentTime;
+        setCurrentTime(vTime);
+
+        // Find closest analysis frame
+        let closestFrame: VideoAnalysisFrame | null = null;
+        if (analysisFrames.length > 0) {
+          // Binary search or nearest lookup
+          let minDiff = Infinity;
+          for (const f of analysisFrames) {
+            const diff = Math.abs(f.timestamp - vTime);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestFrame = f;
+            }
+            if (diff > minDiff && minDiff < 0.1) break;
+          }
+        }
+
+        const defaultHand = (hand: Hand): HandGestureData => ({
+          hand,
+          detected: false,
+          fingertips: {
+            thumb: { x: 0, y: 0 },
+            index: { x: 0, y: 0 },
+            middle: { x: 0, y: 0 },
+            ring: { x: 0, y: 0 },
+            pinky: { x: 0, y: 0 },
+          },
+          state: 'IDLE',
+          activeFinger: null,
+          proximityDistance: 1.0,
+          pinchCenter: null,
+          dragOffset: { dx: 0, dy: 0 },
+          holdDurationMs: 0,
+          triggerTimestamp: 0,
+        });
+
+        const gestureData = {
+          left: closestFrame?.leftHand || defaultHand('left'),
+          right: closestFrame?.rightHand || defaultHand('right'),
+        };
+
+        // Check active events at this timestamp
+        for (const ev of gestureEvents) {
+          const isActive = vTime >= ev.startTime && vTime <= ev.releaseTime;
+          const slotId = `${ev.hand}-${ev.finger}`;
+
+          if (isActive) {
+            // Spawn / update floating text
+            visualRenderer.spawnFloatingText(slotId, ev.hand, ev.text, ev.x, ev.y);
+
+            // Trigger audio once per event
+            if (!triggeredEventIdsRef.current.has(ev.id)) {
+              triggeredEventIdsRef.current.add(ev.id);
+              const slot = getSlot(ev.hand, ev.finger);
+              if (slot?.audioBuffer) {
+                audioManager.triggerAudio(slot.audioBuffer);
+              }
+            }
+          } else {
+            // Release if previously active
+            if (vTime > ev.releaseTime && vTime < ev.releaseTime + 0.6) {
+              visualRenderer.releaseFloatingText(slotId);
             }
           }
         }
-      } else if (hand === 'Right') {
-        const slot = config.rightSlots.find((s) => s.finger === finger && s.enabled);
-        if (slot) {
-          activeRightEffectIdRef.current = slot.effectId;
-          isRightEffectActiveRef.current = true;
 
-          const meta = EFFECT_LIBRARY.find((e) => e.id === slot.effectId);
-          const label = meta ? meta.shortLabel : slot.effectId.toUpperCase();
-          setActiveRightEffectName(meta ? meta.name : slot.effectId);
-
-          visualRenderer.spawnEffectBadge(label, pinchPos.x, pinchPos.y);
-
-          if (config.soundEnabled) {
-            audioManager.playFeedbackSound('activate');
-          }
-        }
-      }
-    },
-    [config]
-  );
-
-  // Gesture Release Callback
-  const handleGestureRelease = useCallback(
-    (hand: HandType, _finger: Finger) => {
-      if (hand === 'Left') {
-        if (activeLeftSlotIdRef.current) {
-          visualRenderer.releaseFloatingText(activeLeftSlotIdRef.current);
-          activeLeftSlotIdRef.current = null;
-        }
-      } else if (hand === 'Right') {
-        isRightEffectActiveRef.current = false;
-        setActiveRightEffectName(null);
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    gestureRecognizer.setCallbacks(handleGestureTrigger, handleGestureRelease);
-  }, [handleGestureTrigger, handleGestureRelease]);
-
-  // Connect video stream to video element
-  useEffect(() => {
-    if (videoRef.current && videoStream) {
-      videoRef.current.srcObject = videoStream;
-      videoRef.current.play().catch((e) => console.warn('Video play error:', e));
-    }
-  }, [videoStream]);
-
-  // Initialize visual renderer with canvas
-  useEffect(() => {
-    if (canvasRef.current) {
-      visualRenderer.init(canvasRef.current);
-    }
-  }, []);
-
-  // Main Render & Detection Animation Loop (Guaranteed Non-Blocking)
-  useEffect(() => {
-    let animId: number;
-    let frameCount = 0;
-    let lastFpsUpdate = performance.now();
-
-    const loop = () => {
-      const now = performance.now();
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-
-      if (canvas) {
-        // Adjust canvas resolution
-        const targetW = (video && video.videoWidth > 0) ? video.videoWidth : 1280;
-        const targetH = (video && video.videoHeight > 0) ? video.videoHeight : 720;
-        if (canvas.width !== targetW || canvas.height !== targetH) {
-          canvas.width = targetW;
-          canvas.height = targetH;
-        }
-
-        // Process Hand Detection
-        let gestureData = video
-          ? gestureRecognizer.processVideoFrame(video, now, true)
-          : {
-              Left: {
-                hand: 'Left' as HandType,
-                detected: false,
-                fingertips: {
-                  thumb: { x: 0, y: 0 },
-                  index: { x: 0, y: 0 },
-                  middle: { x: 0, y: 0 },
-                  ring: { x: 0, y: 0 },
-                  pinky: { x: 0, y: 0 },
-                },
-                state: 'IDLE' as any,
-                activeFinger: null,
-                proximityDistance: 1.0,
-                pinchCenter: null,
-                dragOffset: { dx: 0, dy: 0 },
-                holdDurationMs: 0,
-                effectConfirmedTimestamp: 0,
-              },
-              Right: {
-                hand: 'Right' as HandType,
-                detected: false,
-                fingertips: {
-                  thumb: { x: 0, y: 0 },
-                  index: { x: 0, y: 0 },
-                  middle: { x: 0, y: 0 },
-                  ring: { x: 0, y: 0 },
-                  pinky: { x: 0, y: 0 },
-                },
-                state: 'IDLE' as any,
-                activeFinger: null,
-                proximityDistance: 1.0,
-                pinchCenter: null,
-                dragOffset: { dx: 0, dy: 0 },
-                holdDurationMs: 0,
-                effectConfirmedTimestamp: 0,
-              },
-            };
-
-        // If mouse / touch simulation is active, inject gesture
-        if (simHandRef.current.active) {
-          const sim = simHandRef.current;
-          gestureData = {
-            ...gestureData,
-            [sim.hand]: {
-              hand: sim.hand,
-              detected: true,
-              fingertips: {
-                thumb: { x: sim.pos.x - 0.02, y: sim.pos.y },
-                index: { x: sim.pos.x + 0.02, y: sim.pos.y },
-                middle: { x: sim.pos.x + 0.05, y: sim.pos.y - 0.02 },
-                ring: { x: sim.pos.x + 0.07, y: sim.pos.y - 0.01 },
-                pinky: { x: sim.pos.x + 0.09, y: sim.pos.y + 0.01 },
-              },
-              state: 'ACTIVE',
-              activeFinger: sim.finger,
-              proximityDistance: 0.1,
-              pinchCenter: sim.pos,
-              dragOffset: { dx: 0, dy: 0 },
-              holdDurationMs: 500,
-              effectConfirmedTimestamp: now,
-            },
-          };
-        }
-
-        // Update Left Hand Floating Text follow position
-        if (gestureData.Left.state === 'ACTIVE' && gestureData.Left.pinchCenter && activeLeftSlotIdRef.current) {
-          visualRenderer.updateFloatingTextTarget(
-            activeLeftSlotIdRef.current,
-            gestureData.Left.pinchCenter.x,
-            gestureData.Left.pinchCenter.y
-          );
-        }
-
-        // Render Combined Canvas Frame
-        if (video) {
-          visualRenderer.renderFrame(
-            video,
-            gestureData,
-            config,
-            activeRightEffectIdRef.current as any,
-            isRightEffectActiveRef.current,
-            now
-          );
-        }
-
-        // Update UI Telemetry states
-        setLeftStateLabel(
-          gestureData.Left.detected
-            ? `${gestureData.Left.state}${gestureData.Left.activeFinger ? ` [${gestureData.Left.activeFinger.toUpperCase()}]` : ''}`
-            : 'READY / CLICK STAGE'
-        );
-        setRightStateLabel(
-          gestureData.Right.detected
-            ? `${gestureData.Right.state}${gestureData.Right.activeFinger ? ` [${gestureData.Right.activeFinger.toUpperCase()}]` : ''}`
-            : 'READY / CLICK STAGE'
-        );
+        // Draw composite frame
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time);
       }
 
-      // Calculate FPS
-      frameCount++;
-      if (now - lastFpsUpdate >= 1000) {
-        setFps(Math.round((frameCount * 1000) / (now - lastFpsUpdate)));
-        frameCount = 0;
-        lastFpsUpdate = now;
-      }
-
-      animId = requestAnimationFrame(loop);
+      animationFrameId = requestAnimationFrame(previewLoop);
     };
 
-    animId = requestAnimationFrame(loop);
+    animationFrameId = requestAnimationFrame(previewLoop);
+
     return () => {
-      cancelAnimationFrame(animId);
+      cancelAnimationFrame(animationFrameId);
+      audioManager.stopAll();
     };
-  }, [config]);
+  }, [inputMode, analysisFrames, gestureEvents, config.trackingVisible, getSlot]);
 
-  // RESET ACTION (SPEC Section 5.8)
-  const handleReset = () => {
-    gestureRecognizer.reset();
-    visualRenderer.reset();
-    audioManager.stopAudio();
-    audioManager.playFeedbackSound('reset');
-    activeLeftSlotIdRef.current = null;
-    activeRightEffectIdRef.current = null;
-    isRightEffectActiveRef.current = false;
-    setActiveRightEffectName(null);
-  };
-
-  // PHOTO 3·2·1 COUNTDOWN & CAPTURE (SPEC Section 5.2)
-  const handleStartPhotoCountdown = () => {
-    if (photoCountdown !== null) return;
-
-    let count = 3;
-    setPhotoCountdown(count);
-    audioManager.playFeedbackSound('countdown');
-
-    const interval = setInterval(() => {
-      count--;
-      if (count > 0) {
-        setPhotoCountdown(count);
-        audioManager.playFeedbackSound('countdown');
-      } else {
-        clearInterval(interval);
-        setPhotoCountdown(null);
-        takeSnapshot();
+  // Video metadata load
+  const handleVideoLoadedMetadata = () => {
+    if (hiddenVideoRef.current) {
+      setDuration(hiddenVideoRef.current.duration || 0);
+      if (isPlaying) {
+        hiddenVideoRef.current.play().catch(console.warn);
       }
-    }, 1000);
-  };
-
-  const takeSnapshot = () => {
-    if (!canvasRef.current) return;
-    audioManager.playFeedbackSound('shutter');
-
-    const link = document.createElement('a');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    link.download = `fingercontrol-snapshot-${timestamp}.png`;
-    link.href = canvasRef.current.toDataURL('image/png');
-    link.click();
-  };
-
-  // REC 15s TIMED VIDEO RECORDING (SPEC Section 5.2)
-  const handleStartRecording = () => {
-    if (isRecording || !canvasRef.current) return;
-
-    recordedChunksRef.current = [];
-    try {
-      const stream = canvasRef.current.captureStream(30);
-
-      const audioStream = audioManager.getMediaStream();
-      if (audioStream && audioStream.getAudioTracks().length > 0) {
-        audioStream.getAudioTracks().forEach((track) => stream.addTrack(track));
-      }
-
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6000000 });
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        a.download = `fingercontrol-performance-15s-${timestamp}.webm`;
-        a.href = url;
-        a.click();
-        URL.revokeObjectURL(url);
-        setIsRecording(false);
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setIsRecording(true);
-      setRecSecondsLeft(15);
-      audioManager.playFeedbackSound('activate');
-
-      let remaining = 15;
-      recTimerRef.current = window.setInterval(() => {
-        remaining--;
-        setRecSecondsLeft(remaining);
-        if (remaining <= 0) {
-          if (recTimerRef.current) clearInterval(recTimerRef.current);
-          recorder.stop();
-        }
-      }, 1000);
-    } catch (err) {
-      console.error('MediaRecorder start error:', err);
-      setIsRecording(false);
     }
   };
 
-  const handleStopRecordingEarly = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      if (recTimerRef.current) clearInterval(recTimerRef.current);
-      mediaRecorderRef.current.stop();
-    }
-  };
-
-  // FULLSCREEN TOGGLE
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+  // Play / Pause toggle
+  const togglePlayPause = () => {
+    if (!hiddenVideoRef.current) return;
+    if (isPlaying) {
+      hiddenVideoRef.current.pause();
+      setIsPlaying(false);
     } else {
-      document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      hiddenVideoRef.current.play().catch(console.warn);
+      setIsPlaying(true);
     }
   };
 
-  // Interactive Stage Click & Drag Handlers
-  const handleStagePointerDown = (clientX: number, clientY: number) => {
-    if (!canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = (clientX - rect.left) / rect.width;
-    const y = (clientY - rect.top) / rect.height;
+  // Seek handler
+  const handleSeek = (newTime: number) => {
+    if (hiddenVideoRef.current) {
+      hiddenVideoRef.current.currentTime = newTime;
+      setCurrentTime(newTime);
+      // Reset triggered events cache beyond current time
+      triggeredEventIdsRef.current.clear();
+      for (const ev of gestureEvents) {
+        if (ev.startTime < newTime) {
+          triggeredEventIdsRef.current.add(ev.id);
+        }
+      }
+    }
+  };
 
-    // Left half = left hand, Right half = right hand
-    const hand: HandType = x < 0.5 ? 'Left' : 'Right';
-    const finger: Finger = simFinger;
+  // Delete an event
+  const handleDeleteEvent = (id: string) => {
+    const nextEvents = gestureEvents.filter((ev) => ev.id !== id);
+    onUpdateGestureEvents(nextEvents);
+    if (selectedEventId === id) {
+      setSelectedEventId(null);
+    }
+  };
 
-    simHandRef.current = {
-      active: true,
-      hand,
-      finger,
-      pos: { x, y },
+  // ==========================================
+  // EXPORT VIDEO IMPLEMENTATION
+  // ==========================================
+  const handleExportUploadedVideo = async () => {
+    const video = hiddenVideoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || isExporting) return;
+
+    setIsExporting(true);
+    setExportProgress(0);
+    setExportStatus('PREPARING EXPORT RENDERER...');
+
+    // Pause current preview playback
+    video.pause();
+    setIsPlaying(false);
+    audioManager.stopAll();
+
+    const originalTime = video.currentTime;
+    const totalDuration = video.duration || duration;
+    const exportFps = 30;
+    const interval = 1 / exportFps;
+    const totalFrames = Math.ceil(totalDuration * exportFps);
+
+    // Setup export canvas
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = video.videoWidth || 1280;
+    exportCanvas.height = video.videoHeight || 720;
+    const dedicatedRenderer = new VisualRenderer();
+    dedicatedRenderer.init(exportCanvas);
+
+    // Setup audio destination
+    const ctx = audioManager.getAudioContext();
+    const destNode = ctx.createMediaStreamDestination();
+
+    // Setup MediaRecorder
+    const canvasStream = exportCanvas.captureStream(exportFps);
+    const exportStream = new MediaStream([
+      ...canvasStream.getVideoTracks(),
+      ...destNode.stream.getAudioTracks(),
+    ]);
+
+    let mimeType = 'video/webm;codecs=vp9,opus';
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+    }
+    if (!MediaRecorder.isTypeSupported(mimeType)) {
+      mimeType = 'video/webm';
+    }
+
+    const recordedBlobs: Blob[] = [];
+    const recorder = new MediaRecorder(exportStream, { mimeType });
+    recorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) {
+        recordedBlobs.push(e.data);
+      }
     };
 
-    handleGestureTrigger(hand, finger, { x, y });
+    recorder.start();
+
+    // Map gesture events for audio scheduling
+    const triggeredAudioEvents = new Set<string>();
+
+    // Step frame by frame
+    for (let i = 0; i < totalFrames; i++) {
+      const targetTime = Math.min(i * interval, totalDuration);
+      video.currentTime = targetTime;
+
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked);
+          resolve();
+        };
+        video.addEventListener('seeked', onSeeked, { once: true });
+      });
+
+      // Find analysis frame
+      let closestFrame: VideoAnalysisFrame | null = null;
+      let minDiff = Infinity;
+      for (const f of analysisFrames) {
+        const diff = Math.abs(f.timestamp - targetTime);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closestFrame = f;
+        }
+        if (diff > minDiff && minDiff < 0.1) break;
+      }
+
+      const defaultHand = (hand: Hand): HandGestureData => ({
+        hand,
+        detected: false,
+        fingertips: {
+          thumb: { x: 0, y: 0 },
+          index: { x: 0, y: 0 },
+          middle: { x: 0, y: 0 },
+          ring: { x: 0, y: 0 },
+          pinky: { x: 0, y: 0 },
+        },
+        state: 'IDLE',
+        activeFinger: null,
+        proximityDistance: 1.0,
+        pinchCenter: null,
+        dragOffset: { dx: 0, dy: 0 },
+        holdDurationMs: 0,
+        triggerTimestamp: 0,
+      });
+
+      const gestureData = {
+        left: closestFrame?.leftHand || defaultHand('left'),
+        right: closestFrame?.rightHand || defaultHand('right'),
+      };
+
+      const nowMs = targetTime * 1000;
+
+      // Check active events
+      for (const ev of gestureEvents) {
+        const isActive = targetTime >= ev.startTime && targetTime <= ev.releaseTime;
+        const slotId = `${ev.hand}-${ev.finger}`;
+
+        if (isActive) {
+          dedicatedRenderer.spawnFloatingText(slotId, ev.hand, ev.text, ev.x, ev.y);
+
+          // Trigger audio into destNode
+          if (!triggeredAudioEvents.has(ev.id)) {
+            triggeredAudioEvents.add(ev.id);
+            const slot = getSlot(ev.hand, ev.finger);
+            if (slot?.audioBuffer) {
+              const src = ctx.createBufferSource();
+              src.buffer = slot.audioBuffer;
+              src.connect(destNode);
+              src.start();
+            }
+          }
+        } else if (targetTime > ev.releaseTime) {
+          dedicatedRenderer.releaseFloatingText(slotId);
+        }
+      }
+
+      // Render frame
+      dedicatedRenderer.renderFrame(video, gestureData, config.trackingVisible, nowMs);
+
+      const progress = Math.min(100, Math.round(((i + 1) / totalFrames) * 100));
+      setExportProgress(progress);
+      setExportStatus(`SYNTHESIZING & EXPORTING ${progress}% (${targetTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s)`);
+
+      // Yield
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // Finish recording
+    recorder.onstop = () => {
+      const finalBlob = new Blob(recordedBlobs, { type: mimeType });
+      const downloadUrl = URL.createObjectURL(finalBlob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `fingercontrol-export-${Date.now()}.webm`;
+      a.click();
+      URL.revokeObjectURL(downloadUrl);
+
+      setIsExporting(false);
+      video.currentTime = originalTime;
+    };
+
+    recorder.stop();
   };
 
-  const handleStagePointerMove = (clientX: number, clientY: number) => {
-    if (!simHandRef.current.active || !canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = (clientX - rect.left) / rect.width;
-    const y = (clientY - rect.top) / rect.height;
-
-    simHandRef.current.pos = { x, y };
-  };
-
-  const handleStagePointerUp = () => {
-    if (!simHandRef.current.active) return;
-    const { hand, finger } = simHandRef.current;
-    simHandRef.current.active = false;
-    handleGestureRelease(hand, finger);
+  const formatTime = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    const ms = Math.floor((secs % 1) * 10);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms}`;
   };
 
   return (
-    <div
-      ref={containerRef}
-      className="fixed inset-0 w-full h-full bg-[#080808] overflow-hidden select-none font-mono text-white flex flex-col z-50"
-    >
-      {/* Hidden Video Source */}
-      <video
-        ref={videoRef}
-        playsInline
-        muted
-        autoPlay
-        className="hidden"
-      />
-
-      {/* TOP TOOLBAR (SPEC Section 5.2) */}
-      <header className="absolute top-0 left-0 right-0 z-40 bg-gradient-to-b from-black/90 via-black/50 to-transparent px-6 py-4 flex items-center justify-between pointer-events-auto">
-        {/* Left Actions */}
+    <div className="min-h-screen bg-[#07111F] text-[#E0E6ED] flex flex-col font-mono select-none">
+      
+      {/* Top Bar */}
+      <header className="h-14 border-b border-[#1E2E42] bg-[#0C1929] px-4 flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
           <button
-            onClick={onEditSetup}
-            className="px-3.5 py-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] hover:border-[#666666] text-white text-xs font-bold tracking-wider rounded transition-colors flex items-center gap-1.5 shadow-lg cursor-pointer"
+            onClick={() => {
+              audioManager.stopAll();
+              onBackToSetup();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
           >
-            <Sliders className="w-3.5 h-3.5 text-[#ff3333]" />
-            <span>EDIT SETUP</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            BACK TO SETUP
           </button>
 
-          <button
-            onClick={handleReset}
-            className="px-3.5 py-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] hover:border-[#ff3333]/60 text-[#cccccc] hover:text-white text-xs font-bold tracking-wider rounded transition-colors flex items-center gap-1.5 shadow-lg cursor-pointer"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-[#ff3333]" />
-            <span>RESET</span>
-          </button>
+          <div className="h-4 w-px bg-[#1E2E42]" />
 
-          {/* Camera / Demo mode switcher */}
-          {isVirtualCamera ? (
-            <button
-              onClick={onSwitchToCamera}
-              className="hidden sm:flex px-3 py-1.5 bg-[#181818] hover:bg-[#222222] border border-[#333333] text-white text-xs font-bold tracking-wider rounded items-center gap-1.5 cursor-pointer"
-              title="Switch to Real Webcam"
-            >
-              <Camera className="w-3.5 h-3.5 text-[#ff3333]" />
-              <span>USE WEBCAM</span>
-            </button>
-          ) : (
-            <button
-              onClick={onSwitchToDemo}
-              className="hidden sm:flex px-3 py-1.5 bg-[#181818] hover:bg-[#222222] border border-[#333333] text-white text-xs font-bold tracking-wider rounded items-center gap-1.5 cursor-pointer"
-              title="Switch to Virtual Demo Studio"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-[#ff3333]" />
-              <span>DEMO STUDIO</span>
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-[#FF0000] inline-block"></span>
+            <span className="font-bold text-xs uppercase text-white tracking-widest">
+              FINGERCONTROL
+            </span>
+            <span className="text-[10px] text-[#8A9BA8] bg-[#07111F] border border-[#1E2E42] px-2 py-0.5 rounded uppercase">
+              {inputMode === 'CAMERA' ? 'LIVE CAMERA' : 'VIDEO PREVIEW'}
+            </span>
+          </div>
         </div>
 
-        {/* Center Performance Badges */}
-        <div className="flex items-center gap-4 text-xs bg-[#101010]/80 border border-[#262626] px-4 py-1.5 rounded-full backdrop-blur-md">
-          <div className="flex items-center gap-2">
-            <span className="text-[#666666]">L-HAND:</span>
-            <span
-              className={`font-semibold ${
-                leftStateLabel.includes('ACTIVE') ? 'text-[#ff3333] animate-pulse' : 'text-[#aaaaaa]'
+        {/* Right Header Controls */}
+        <div className="flex items-center gap-3">
+          {/* Tracking toggle */}
+          <button
+            onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors ${
+              config.trackingVisible
+                ? 'bg-[#152336] border-[#FF0000]/50 text-white'
+                : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
+            }`}
+            title="Toggle Tracking Overlay"
+          >
+            {config.trackingVisible ? <Eye className="w-3.5 h-3.5 text-[#FF0000]" /> : <EyeOff className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">TRACKING</span>
+          </button>
+
+          {/* Mirror toggle */}
+          <button
+            onClick={() => onUpdateConfig({ ...config, mirroredVideo: !config.mirroredVideo })}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors ${
+              config.mirroredVideo
+                ? 'bg-[#152336] border-[#2A4365] text-white'
+                : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
+            }`}
+            title="Toggle Mirror"
+          >
+            <FlipHorizontal className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">MIRROR</span>
+          </button>
+
+          {/* Camera Mode: Record Button */}
+          {inputMode === 'CAMERA' && (
+            <button
+              onClick={isRecordingCamera ? handleStopCameraRecording : handleStartCameraRecording}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm ${
+                isRecordingCamera
+                  ? 'bg-[#FF0000] text-white animate-pulse'
+                  : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
               }`}
             >
-              {leftStateLabel}
-            </span>
-          </div>
+              <Circle className="w-3.5 h-3.5 fill-current" />
+              {isRecordingCamera ? `REC (${recordingSeconds}s)` : 'RECORD'}
+            </button>
+          )}
 
-          <div className="w-px h-3.5 bg-[#333333]" />
-
-          <div className="flex items-center gap-2">
-            <span className="text-[#666666]">R-HAND:</span>
-            <span
-              className={`font-semibold ${
-                rightStateLabel.includes('ACTIVE') ? 'text-[#ff3333] animate-pulse' : 'text-[#aaaaaa]'
-              }`}
-            >
-              {rightStateLabel}
-            </span>
-          </div>
-
-          {activeRightEffectName && (
+          {/* Upload Video Mode: Reanalyze & Export Buttons */}
+          {inputMode === 'UPLOAD_VIDEO' && (
             <>
-              <div className="w-px h-3.5 bg-[#333333]" />
-              <div className="text-[#ff3333] font-bold tracking-widest text-[11px] animate-pulse">
-                [{activeRightEffectName}]
-              </div>
+              <button
+                onClick={onReanalyze}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors"
+                title="Re-run Hand Detection Analysis"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">REANALYZE</span>
+              </button>
+
+              <button
+                onClick={handleExportUploadedVideo}
+                disabled={isExporting}
+                className="flex items-center gap-2 px-4 py-1.5 rounded bg-[#FF0000] hover:bg-[#E60000] disabled:bg-[#4A1515] text-white text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                EXPORT VIDEO
+              </button>
             </>
           )}
         </div>
-
-        {/* Right Actions: Photo, Rec, Fullscreen */}
-        <div className="flex items-center gap-3">
-          {/* Photo 3·2·1 */}
-          <button
-            onClick={handleStartPhotoCountdown}
-            disabled={photoCountdown !== null}
-            className="px-3 py-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] hover:border-white text-white text-xs font-bold tracking-wider rounded transition-colors flex items-center gap-1.5 shadow-lg cursor-pointer"
-          >
-            <Camera className="w-3.5 h-3.5 text-[#ff3333]" />
-            <span>{photoCountdown !== null ? `SNAP IN ${photoCountdown}...` : 'PHOTO 3·2·1'}</span>
-          </button>
-
-          {/* REC 15s */}
-          <button
-            onClick={isRecording ? handleStopRecordingEarly : handleStartRecording}
-            className={`px-3.5 py-1.5 border text-xs font-bold tracking-wider rounded transition-all flex items-center gap-2 shadow-lg cursor-pointer ${
-              isRecording
-                ? 'bg-[#ff3333] text-white border-[#ff3333] animate-pulse'
-                : 'bg-[#141414]/90 hover:bg-[#202020] border-[#333333] text-white'
-            }`}
-          >
-            <Disc className={`w-3.5 h-3.5 ${isRecording ? 'text-white' : 'text-[#ff3333]'}`} />
-            <span>{isRecording ? `REC [${recSecondsLeft}s]` : 'REC 15s'}</span>
-          </button>
-
-          {/* Quick Tracking Toggle */}
-          <button
-            onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
-            title="Toggle Tracking Points"
-          >
-            {config.trackingVisible ? <Eye className="w-4 h-4 text-[#ff3333]" /> : <EyeOff className="w-4 h-4" />}
-          </button>
-
-          {/* Quick Audio Toggle */}
-          <button
-            onClick={() => onUpdateConfig({ ...config, soundEnabled: !config.soundEnabled })}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
-            title="Toggle Audio Feedback"
-          >
-            {config.soundEnabled ? <Volume2 className="w-4 h-4 text-[#ff3333]" /> : <VolumeX className="w-4 h-4" />}
-          </button>
-
-          {/* Fullscreen */}
-          <button
-            onClick={toggleFullscreen}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
-            title="Fullscreen Toggle"
-          >
-            {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-          </button>
-        </div>
       </header>
 
-      {/* Primary Composite Visual Canvas Stage */}
-      <main
-        className="flex-1 w-full h-full flex items-center justify-center relative bg-[#080808] touch-none"
-        onMouseDown={(e) => handleStagePointerDown(e.clientX, e.clientY)}
-        onMouseMove={(e) => handleStagePointerMove(e.clientX, e.clientY)}
-        onMouseUp={handleStagePointerUp}
-        onTouchStart={(e) => {
-          if (e.touches.length > 0) {
-            handleStagePointerDown(e.touches[0].clientX, e.touches[0].clientY);
-          }
-        }}
-        onTouchMove={(e) => {
-          if (e.touches.length > 0) {
-            handleStagePointerMove(e.touches[0].clientX, e.touches[0].clientY);
-          }
-        }}
-        onTouchEnd={handleStagePointerUp}
-      >
-        <canvas
-          ref={canvasRef}
-          className="w-full h-full object-contain cursor-crosshair"
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col items-center justify-center p-4 bg-[#050C16] relative overflow-hidden">
+        
+        {/* Hidden video element for feed decoding */}
+        <video
+          ref={hiddenVideoRef}
+          src={inputMode === 'UPLOAD_VIDEO' ? displayVideoUrl || undefined : undefined}
+          onLoadedMetadata={handleVideoLoadedMetadata}
+          playsInline
+          muted
+          loop={inputMode === 'UPLOAD_VIDEO'}
+          className="hidden"
         />
 
-        {/* Photo Countdown Big Screen Overlay */}
-        {photoCountdown !== null && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-50 pointer-events-none">
-            <div className="text-9xl font-extrabold text-white tracking-tighter drop-shadow-[0_0_30px_#ff3333] animate-ping">
-              {photoCountdown}
-            </div>
-          </div>
-        )}
+        {/* Master Composition Canvas */}
+        <div className="relative max-w-full max-h-[75vh] flex items-center justify-center rounded-lg border border-[#1E2E42] bg-[#000000] shadow-2xl overflow-hidden">
+          <canvas
+            ref={canvasRef}
+            className="max-w-full max-h-[75vh] object-contain block"
+          />
 
-        {/* Recording Visual Border Indicator */}
-        {isRecording && (
-          <div className="absolute inset-0 pointer-events-none border-4 border-[#ff3333]/80 z-30 flex flex-col justify-between p-4">
-            <div className="flex items-center justify-between text-xs bg-black/70 px-4 py-2 rounded self-center border border-[#ff3333]/40 backdrop-blur-sm">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-[#ff3333] rounded-full animate-ping" />
-                <span className="font-bold tracking-widest text-[#ff3333]">RECORDING PERFORMANCE</span>
+          {/* Export Overlay Modal */}
+          {isExporting && (
+            <div className="absolute inset-0 bg-[#07111F]/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 z-20">
+              <div className="w-full max-w-sm space-y-3 text-center">
+                <span className="w-3 h-3 rounded-full bg-[#FF0000] inline-block animate-ping"></span>
+                <h3 className="text-sm font-bold text-white uppercase tracking-widest">
+                  SYNTHESIZING FINAL VIDEO
+                </h3>
+                <p className="text-xs text-[#8A9BA8]">{exportStatus}</p>
+
+                <div className="w-full h-2.5 bg-[#0C1929] border border-[#1E2E42] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[#FF0000] transition-all duration-100"
+                    style={{ width: `${exportProgress}%` }}
+                  />
+                </div>
+                <div className="text-xs text-white font-bold">{exportProgress}%</div>
               </div>
-              <span className="ml-4 font-mono font-bold text-white text-sm">{recSecondsLeft}s remaining</span>
             </div>
+          )}
+        </div>
+
+        {/* Upload Mode: Interactive Playback & Event Timeline */}
+        {inputMode === 'UPLOAD_VIDEO' && (
+          <div className="w-full max-w-4xl mt-3 bg-[#0C1929] border border-[#1E2E42] rounded-md p-3 space-y-2 text-xs">
+            {/* Timeline Controls */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={togglePlayPause}
+                className="p-2 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-white transition-colors"
+                title={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              </button>
+
+              <span className="text-[11px] font-mono text-[#8A9BA8] shrink-0">
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </span>
+
+              {/* Progress Slider with Events */}
+              <div className="relative flex-1 flex items-center h-6">
+                <input
+                  type="range"
+                  min={0}
+                  max={duration || 1}
+                  step={0.01}
+                  value={currentTime}
+                  onChange={(e) => handleSeek(parseFloat(e.target.value))}
+                  className="w-full h-1.5 bg-[#07111F] rounded-lg appearance-none cursor-pointer accent-[#FF0000]"
+                />
+
+                {/* Event Markers along Timeline */}
+                {duration > 0 &&
+                  gestureEvents.map((ev) => {
+                    const leftPct = (ev.startTime / duration) * 100;
+                    const isSelected = selectedEventId === ev.id;
+                    return (
+                      <div
+                        key={ev.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEventId(ev.id);
+                          handleSeek(ev.startTime);
+                        }}
+                        style={{ left: `${leftPct}%` }}
+                        className={`absolute top-0 w-2 h-6 -ml-1 cursor-pointer transition-all ${
+                          isSelected
+                            ? 'bg-white z-10 ring-2 ring-[#FF0000]'
+                            : 'bg-[#FF0000] hover:bg-white hover:scale-125 opacity-80'
+                        }`}
+                        title={`${ev.hand.toUpperCase()} ${ev.finger.toUpperCase()}: "${ev.text}" at ${ev.startTime.toFixed(2)}s`}
+                      />
+                    );
+                  })}
+              </div>
+
+              <span className="text-[10px] text-[#8A9BA8] uppercase shrink-0">
+                {gestureEvents.length} DETECTED EVENTS
+              </span>
+            </div>
+
+            {/* Selected Event Details & Deletion */}
+            {selectedEventId && (
+              <div className="flex items-center justify-between bg-[#07111F] border border-[#1E2E42] px-3 py-1.5 rounded text-[11px]">
+                {(() => {
+                  const ev = gestureEvents.find((e) => e.id === selectedEventId);
+                  if (!ev) return null;
+                  return (
+                    <>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[#FF0000] font-bold uppercase">
+                          [{ev.hand.toUpperCase()} {ev.finger.toUpperCase()}]
+                        </span>
+                        <span className="text-white font-medium">"{ev.text}"</span>
+                        <span className="text-[#8A9BA8] flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {ev.startTime.toFixed(2)}s - {ev.releaseTime.toFixed(2)}s
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleDeleteEvent(ev.id)}
+                          className="text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1 transition-colors"
+                          title="Delete False Trigger"
+                        >
+                          <Trash2 className="w-3 h-3" /> DELETE EVENT
+                        </button>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+            )}
           </div>
         )}
       </main>
-
-      {/* Bottom Status Bar & Simulation Finger Select */}
-      <footer className="absolute bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-black/80 to-transparent px-6 py-3 flex items-center justify-between text-[11px] text-[#777777] pointer-events-auto">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 bg-[#22c55e] rounded-full" />
-            <span>RENDER FPS: <strong className="text-white font-mono">{fps}</strong></span>
-          </div>
-
-          <div className="hidden sm:flex items-center gap-2 text-[#666666]">
-            <span>{isVirtualCamera ? 'VIRTUAL STUDIO ACTIVE' : 'WEBCAM ACTIVE'}</span>
-            <span>&bull;</span>
-            <span>PINCH IN AIR OR CLICK &amp; DRAG ANYWHERE</span>
-          </div>
-        </div>
-
-        {/* Finger Trigger Selector for Instant Clicking */}
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[#888888] hidden md:inline">CLICK TRIGGER FINGER:</span>
-          {(['index', 'middle', 'ring', 'pinky'] as Finger[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setSimFinger(f)}
-              className={`px-2 py-0.5 rounded text-[10px] uppercase font-mono transition-colors cursor-pointer ${
-                simFinger === f
-                  ? 'bg-[#ff3333] text-white font-bold shadow-[0_0_8px_rgba(255,51,51,0.5)]'
-                  : 'bg-[#141414] text-[#888888] border border-[#2c2c2c] hover:text-white'
-              }`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </footer>
     </div>
   );
 };

@@ -1,5 +1,14 @@
 import { FilesetResolver, HandLandmarker, HandLandmarkerResult } from '@mediapipe/tasks-vision';
-import { Finger, HandGestureData, HandType, FingertipPoint, GestureState } from '../types/config';
+import {
+  Finger,
+  HandGestureData,
+  Hand,
+  FingertipPoint,
+  GestureState,
+  GestureEvent,
+  VideoAnalysisFrame,
+  ContentSlot,
+} from '../types/config';
 
 function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
   return new Promise((resolve) => {
@@ -21,58 +30,60 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Prom
   });
 }
 
+export interface HandTrackerState {
+  state: GestureState;
+  activeFinger: Finger | null;
+  armStartTime: number;
+  lastTriggerTime: number;
+  pinchStartPos: FingertipPoint | null;
+  currentPinchPos: FingertipPoint | null;
+  triggerTimestamp: number;
+  cooldownUntil: number;
+}
+
 export class GestureRecognizerManager {
   private handLandmarker: HandLandmarker | null = null;
   private isInitializing: boolean = false;
   private isLoaded: boolean = false;
 
-  // Track state for both hands
-  private states: Record<HandType, {
-    state: GestureState;
-    activeFinger: Finger | null;
-    armStartTime: number;
-    lastTriggerTime: number;
-    pinchStartPos: FingertipPoint | null;
-    currentPinchPos: FingertipPoint | null;
-    effectConfirmedTimestamp: number;
-    cooldownUntil: number;
-  }> = {
-    Left: {
+  // Track state for left and right hands
+  private states: Record<Hand, HandTrackerState> = {
+    left: {
       state: 'IDLE',
       activeFinger: null,
       armStartTime: 0,
       lastTriggerTime: 0,
       pinchStartPos: null,
       currentPinchPos: null,
-      effectConfirmedTimestamp: 0,
+      triggerTimestamp: 0,
       cooldownUntil: 0,
     },
-    Right: {
+    right: {
       state: 'IDLE',
       activeFinger: null,
       armStartTime: 0,
       lastTriggerTime: 0,
       pinchStartPos: null,
       currentPinchPos: null,
-      effectConfirmedTimestamp: 0,
+      triggerTimestamp: 0,
       cooldownUntil: 0,
     },
   };
 
   // Callbacks
-  private onTriggerCallback?: (hand: HandType, finger: Finger, pinchPos: FingertipPoint) => void;
-  private onReleaseCallback?: (hand: HandType, finger: Finger) => void;
+  private onTriggerCallback?: (hand: Hand, finger: Finger, pinchPos: FingertipPoint, timestamp: number) => void;
+  private onReleaseCallback?: (hand: Hand, finger: Finger, timestamp: number) => void;
 
   public setCallbacks(
-    onTrigger: (hand: HandType, finger: Finger, pinchPos: FingertipPoint) => void,
-    onRelease: (hand: HandType, finger: Finger) => void
+    onTrigger: (hand: Hand, finger: Finger, pinchPos: FingertipPoint, timestamp: number) => void,
+    onRelease: (hand: Hand, finger: Finger, timestamp: number) => void
   ) {
     this.onTriggerCallback = onTrigger;
     this.onReleaseCallback = onRelease;
   }
 
   public async initialize(): Promise<boolean> {
-    if (this.isLoaded) return true;
+    if (this.isLoaded && this.handLandmarker) return true;
     if (this.isInitializing) return false;
 
     this.isInitializing = true;
@@ -91,15 +102,15 @@ export class GestureRecognizerManager {
           },
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.45,
-          minHandPresenceConfidence: 0.45,
-          minTrackingConfidence: 0.45,
+          minHandDetectionConfidence: 0.4,
+          minHandPresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
         });
 
         this.isLoaded = true;
         return true;
       } catch (gpuErr) {
-        console.warn('MediaPipe GPU load failed, trying CPU delegate:', gpuErr);
+        console.warn('MediaPipe GPU load failed, falling back to CPU delegate:', gpuErr);
         try {
           const vision = await FilesetResolver.forVisionTasks(
             'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
@@ -127,8 +138,7 @@ export class GestureRecognizerManager {
       }
     };
 
-    // Max 3.5s timeout so it NEVER hangs
-    const success = await withTimeout(loadTask(), 3500, false);
+    const success = await withTimeout(loadTask(), 4500, false);
     this.isInitializing = false;
     return success;
   }
@@ -138,10 +148,10 @@ export class GestureRecognizerManager {
   }
 
   public reset(): void {
-    for (const hand of ['Left', 'Right'] as HandType[]) {
+    for (const hand of ['left', 'right'] as Hand[]) {
       const s = this.states[hand];
       if (s.state === 'ACTIVE' && s.activeFinger && this.onReleaseCallback) {
-        this.onReleaseCallback(hand, s.activeFinger);
+        this.onReleaseCallback(hand, s.activeFinger, performance.now());
       }
       this.states[hand] = {
         state: 'IDLE',
@@ -150,18 +160,21 @@ export class GestureRecognizerManager {
         lastTriggerTime: 0,
         pinchStartPos: null,
         currentPinchPos: null,
-        effectConfirmedTimestamp: 0,
+        triggerTimestamp: 0,
         cooldownUntil: 0,
       };
     }
   }
 
+  /**
+   * Process a single video frame (live camera or video playback)
+   */
   public processVideoFrame(
-    video: HTMLVideoElement,
-    timestamp: number,
+    video: HTMLVideoElement | HTMLCanvasElement,
+    timestampMs: number,
     isMirrored: boolean = true
-  ): { Left: HandGestureData; Right: HandGestureData } {
-    const defaultData = (hand: HandType): HandGestureData => ({
+  ): { left: HandGestureData; right: HandGestureData } {
+    const defaultData = (hand: Hand): HandGestureData => ({
       hand,
       detected: false,
       fingertips: {
@@ -177,43 +190,43 @@ export class GestureRecognizerManager {
       pinchCenter: this.states[hand].currentPinchPos,
       dragOffset: { dx: 0, dy: 0 },
       holdDurationMs: 0,
-      effectConfirmedTimestamp: this.states[hand].effectConfirmedTimestamp,
+      triggerTimestamp: this.states[hand].triggerTimestamp,
     });
 
-    const result: { Left: HandGestureData; Right: HandGestureData } = {
-      Left: defaultData('Left'),
-      Right: defaultData('Right'),
+    const result: { left: HandGestureData; right: HandGestureData } = {
+      left: defaultData('left'),
+      right: defaultData('right'),
     };
 
-    if (!this.handLandmarker || video.readyState < 2) {
+    if (!this.handLandmarker) {
+      return result;
+    }
+
+    if (video instanceof HTMLVideoElement && video.readyState < 2) {
       return result;
     }
 
     try {
-      const detections: HandLandmarkerResult = this.handLandmarker.detectForVideo(video, timestamp);
+      const detections: HandLandmarkerResult = this.handLandmarker.detectForVideo(video, timestampMs);
 
       if (detections && detections.landmarks && detections.landmarks.length > 0) {
         for (let i = 0; i < detections.landmarks.length; i++) {
           const rawLandmarks = detections.landmarks[i];
           const handednessCategory = detections.handednesses?.[i]?.[0]?.categoryName;
 
-          // In mirrored video mode (standard selfie mirror):
-          // MediaPipe sees the camera image. When the user raises their left hand,
-          // in mirrored view it appears on the screen's left side.
-          // MediaPipe identifies handedness from hand anatomy.
-          let handType: HandType = 'Right';
+          // Determine hand type (left vs right)
+          let handType: Hand = 'right';
           if (handednessCategory === 'Left') {
-            handType = 'Left';
+            handType = 'left';
           } else if (handednessCategory === 'Right') {
-            handType = 'Right';
+            handType = 'right';
           } else {
-            // Fallback based on horizontal position in mirrored view
             const wristX = isMirrored ? 1 - rawLandmarks[0].x : rawLandmarks[0].x;
-            handType = wristX < 0.5 ? 'Left' : 'Right';
+            handType = wristX < 0.5 ? 'left' : 'right';
           }
 
-          // Map landmarks to screen space (mirrored horizontally)
-          const transformPoint = (p: { x: number; y: number; z: number }): FingertipPoint => ({
+          // Map landmarks to screen space (mirrored horizontally if requested)
+          const transformPoint = (p: { x: number; y: number; z?: number }): FingertipPoint => ({
             x: isMirrored ? 1 - p.x : p.x,
             y: p.y,
             z: p.z,
@@ -227,6 +240,18 @@ export class GestureRecognizerManager {
           const middleTip = landmarks[12];
           const ringTip = landmarks[16];
           const pinkyTip = landmarks[20];
+
+          // Compute Bounding Box from all 21 landmarks
+          let minX = 1;
+          let minY = 1;
+          let maxX = 0;
+          let maxY = 0;
+          for (const pt of landmarks) {
+            if (pt.x < minX) minX = pt.x;
+            if (pt.y < minY) minY = pt.y;
+            if (pt.x > maxX) maxX = pt.x;
+            if (pt.y > maxY) maxY = pt.y;
+          }
 
           // Hand scale: distance between wrist (0) and middle MCP (9)
           const wrist = landmarks[0];
@@ -254,8 +279,8 @@ export class GestureRecognizerManager {
           const approachThreshold = 0.70;
           const pinchOnThreshold = 0.38;
           const pinchOffThreshold = 0.52;
-          const ARM_DURATION_MS = 180; // Hold required before active
-          const now = performance.now();
+          const ARM_DURATION_MS = 180; // Hold required before activation (SPEC: 180–250ms)
+          const now = timestampMs;
 
           const handState = this.states[handType];
           let currentState = handState.state;
@@ -268,7 +293,7 @@ export class GestureRecognizerManager {
 
           // State Machine
           if (now < handState.cooldownUntil && currentState === 'IDLE') {
-            // In cooldown
+            // In cooldown period
           } else if (currentState === 'IDLE') {
             if (nearest.dist < pinchOnThreshold) {
               currentState = 'ARMING';
@@ -299,14 +324,14 @@ export class GestureRecognizerManager {
               currentState = 'IDLE';
               activeFinger = null;
             } else {
-              // Check arm timer
+              // Check arm hold timer
               const holdTime = now - handState.armStartTime;
               if (holdTime >= ARM_DURATION_MS) {
                 currentState = 'ACTIVE';
                 handState.lastTriggerTime = now;
-                handState.effectConfirmedTimestamp = now;
+                handState.triggerTimestamp = now;
                 if (this.onTriggerCallback && activeFinger) {
-                  this.onTriggerCallback(handType, activeFinger, midPoint);
+                  this.onTriggerCallback(handType, activeFinger, midPoint, now);
                 }
               }
             }
@@ -315,9 +340,9 @@ export class GestureRecognizerManager {
               // Released!
               currentState = 'RELEASING';
               if (this.onReleaseCallback && activeFinger) {
-                this.onReleaseCallback(handType, activeFinger);
+                this.onReleaseCallback(handType, activeFinger, now);
               }
-              handState.cooldownUntil = now + 250; // brief cooldown
+              handState.cooldownUntil = now + 250; // brief cooldown before next trigger
               currentState = 'IDLE';
               activeFinger = null;
               handState.pinchStartPos = null;
@@ -352,8 +377,9 @@ export class GestureRecognizerManager {
             pinchCenter: midPoint,
             dragOffset: { dx, dy },
             holdDurationMs: currentState === 'ARMING' ? now - handState.armStartTime : 0,
-            effectConfirmedTimestamp: handState.effectConfirmedTimestamp,
+            triggerTimestamp: handState.triggerTimestamp,
             rawLandmarks: landmarks,
+            boundingBox: { minX, minY, maxX, maxY },
           };
         }
       }
@@ -362,6 +388,118 @@ export class GestureRecognizerManager {
     }
 
     return result;
+  }
+
+  /**
+   * Analyze an uploaded video frame by frame
+   * Generates all GestureEvents and VideoAnalysisFrame data.
+   */
+  public async analyzeVideo(
+    videoElement: HTMLVideoElement,
+    slots: ContentSlot[],
+    isMirrored: boolean,
+    onProgress: (progress: number, statusText: string) => void
+  ): Promise<{ events: GestureEvent[]; frames: VideoAnalysisFrame[] }> {
+    await this.initialize();
+    this.reset();
+
+    const duration = videoElement.duration;
+    if (!duration || isNaN(duration) || duration <= 0) {
+      throw new Error('Invalid video duration');
+    }
+
+    const fps = 30;
+    const interval = 1 / fps;
+    const totalFrames = Math.ceil(duration * fps);
+
+    const events: GestureEvent[] = [];
+    const frames: VideoAnalysisFrame[] = [];
+
+    // Track active event per hand during offline scanning
+    const activeEvents: Record<Hand, GestureEvent | null> = {
+      left: null,
+      right: null,
+    };
+
+    // Slot lookup map
+    const slotMap = new Map<string, ContentSlot>();
+    for (const slot of slots) {
+      slotMap.set(`${slot.hand}-${slot.finger}`, slot);
+    }
+
+    // Set callback to accumulate events
+    this.setCallbacks(
+      (hand, finger, pinchPos, timestamp) => {
+        const timeSec = timestamp / 1000;
+        const slot = slotMap.get(`${hand}-${finger}`);
+        const text = slot?.text || finger.toUpperCase();
+        const eventId = `event-${hand}-${finger}-${Math.round(timestamp)}`;
+
+        const event: GestureEvent = {
+          id: eventId,
+          hand,
+          finger,
+          startTime: timeSec,
+          releaseTime: timeSec + 1.2, // provisional
+          x: pinchPos.x,
+          y: pinchPos.y,
+          text,
+        };
+
+        activeEvents[hand] = event;
+        events.push(event);
+      },
+      (hand, _finger, timestamp) => {
+        const timeSec = timestamp / 1000;
+        if (activeEvents[hand]) {
+          activeEvents[hand]!.releaseTime = timeSec;
+          activeEvents[hand] = null;
+        }
+      }
+    );
+
+    // Step through each frame
+    for (let i = 0; i < totalFrames; i++) {
+      const targetTime = Math.min(i * interval, duration);
+      videoElement.currentTime = targetTime;
+
+      // Wait for seek to complete
+      await new Promise<void>((resolve) => {
+        const onSeeked = () => {
+          videoElement.removeEventListener('seeked', onSeeked);
+          resolve();
+        };
+        videoElement.addEventListener('seeked', onSeeked, { once: true });
+      });
+
+      const timestampMs = targetTime * 1000;
+      const frameData = this.processVideoFrame(videoElement, timestampMs, isMirrored);
+
+      frames.push({
+        timestamp: targetTime,
+        leftHand: frameData.left,
+        rightHand: frameData.right,
+      });
+
+      const progress = Math.min(100, Math.round(((i + 1) / totalFrames) * 100));
+      onProgress(progress, `ANALYZING FRAME ${i + 1}/${totalFrames} (${targetTime.toFixed(1)}s / ${duration.toFixed(1)}s)`);
+
+      // Yield event loop occasionally to keep UI snappy
+      if (i % 5 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    // Close any unreleased events
+    for (const hand of ['left', 'right'] as Hand[]) {
+      if (activeEvents[hand]) {
+        activeEvents[hand]!.releaseTime = duration;
+        activeEvents[hand] = null;
+      }
+    }
+
+    this.reset();
+    return { events, frames };
   }
 }
 

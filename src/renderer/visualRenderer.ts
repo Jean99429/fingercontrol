@@ -1,13 +1,13 @@
-import { EffectId, FingercontrolConfig, HandGestureData } from '../types/config';
-import { effectEngine } from './effectLibrary';
+import { Hand, HandGestureData } from '../types/config';
 
 export interface FloatingTextItem {
   id: string;
+  hand: Hand;
   text: string;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
+  x: number; // in canvas px
+  y: number; // in canvas px
+  targetX: number; // in canvas px
+  targetY: number; // in canvas px
   vx: number;
   vy: number;
   alpha: number;
@@ -16,20 +16,26 @@ export interface FloatingTextItem {
   releaseTime: number;
 }
 
+interface SmoothBox {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  initialized: boolean;
+}
+
 export class VisualRenderer {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
 
-  // Active floating text items for left hand
+  // Active floating text items for both hands
   private floatingTexts: Map<string, FloatingTextItem> = new Map();
 
-  // Active effect confirmation badges for right hand
-  private effectBadges: {
-    label: string;
-    x: number;
-    y: number;
-    spawnTime: number;
-  }[] = [];
+  // Smoothed bounding box history for L and R coordinate frames
+  private smoothedBoxes: Record<Hand, SmoothBox> = {
+    left: { minX: 0, minY: 0, maxX: 0, maxY: 0, initialized: false },
+    right: { minX: 0, minY: 0, maxX: 0, maxY: 0, initialized: false },
+  };
 
   public init(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
@@ -37,28 +43,33 @@ export class VisualRenderer {
   }
 
   public reset(): void {
-    effectEngine.reset();
     this.floatingTexts.clear();
-    this.effectBadges = [];
+    this.smoothedBoxes.left.initialized = false;
+    this.smoothedBoxes.right.initialized = false;
   }
 
-  public spawnFloatingText(slotId: string, text: string, x: number, y: number): void {
+  public spawnFloatingText(slotId: string, hand: Hand, text: string, xNorm: number, yNorm: number): void {
+    if (!this.canvas) return;
+    const px = xNorm * this.canvas.width;
+    const py = yNorm * this.canvas.height;
+
     const existing = this.floatingTexts.get(slotId);
     if (existing) {
       existing.text = text;
-      existing.targetX = x;
-      existing.targetY = y;
+      existing.targetX = px;
+      existing.targetY = py;
       existing.active = true;
       existing.releaseTime = 0;
       existing.alpha = 1.0;
     } else {
       this.floatingTexts.set(slotId, {
         id: slotId,
+        hand,
         text,
-        x,
-        y,
-        targetX: x,
-        targetY: y,
+        x: px,
+        y: py,
+        targetX: px,
+        targetY: py,
         vx: 0,
         vy: 0,
         alpha: 1.0,
@@ -69,11 +80,12 @@ export class VisualRenderer {
     }
   }
 
-  public updateFloatingTextTarget(slotId: string, x: number, y: number): void {
+  public updateFloatingTextTarget(slotId: string, xNorm: number, yNorm: number): void {
+    if (!this.canvas) return;
     const item = this.floatingTexts.get(slotId);
     if (item && item.active) {
-      item.targetX = x;
-      item.targetY = y;
+      item.targetX = xNorm * this.canvas.width;
+      item.targetY = yNorm * this.canvas.height;
     }
   }
 
@@ -85,25 +97,17 @@ export class VisualRenderer {
     }
   }
 
-  public spawnEffectBadge(label: string, x: number, y: number): void {
-    this.effectBadges.push({
-      label,
-      x,
-      y,
-      spawnTime: performance.now(),
-    });
-    if (this.effectBadges.length > 5) {
-      this.effectBadges.shift();
-    }
-  }
-
+  /**
+   * Render complete frame:
+   * 1. Draw raw video image (unmodified RGB)
+   * 2. Draw coordinate frames and #FF0000 fingertip dots
+   * 3. Draw active/fading floating text words
+   */
   public renderFrame(
-    video: HTMLVideoElement,
-    gestureData: { Left: HandGestureData; Right: HandGestureData },
-    config: FingercontrolConfig,
-    activeRightEffectId: EffectId | null,
-    isRightEffectActive: boolean,
-    now: number
+    video: HTMLVideoElement | CanvasImageSource,
+    gestureData: { left: HandGestureData; right: HandGestureData },
+    trackingVisible: boolean = true,
+    now: number = performance.now()
   ): void {
     if (!this.canvas || !this.ctx) return;
 
@@ -111,161 +115,206 @@ export class VisualRenderer {
     const height = this.canvas.height;
     const ctx = this.ctx;
 
-    // 1. Clear background (near-black)
-    ctx.fillStyle = '#080808';
-    ctx.fillRect(0, 0, width, height);
+    // 1. Draw the clean, raw video frame
+    try {
+      ctx.drawImage(video, 0, 0, width, height);
+    } catch {
+      ctx.fillStyle = '#080808';
+      ctx.fillRect(0, 0, width, height);
+    }
 
-    // 2. Render Main Visual & Effects Layer
-    effectEngine.updateAndRender(
-      ctx,
-      width,
-      height,
-      video,
-      activeRightEffectId,
-      isRightEffectActive,
-      gestureData.Right,
-      now
-    );
-
-    // 3. Render Fingertip Tracking Layer (if enabled in config)
-    if (config.trackingVisible) {
+    // 2. Draw Hand Coordinate Frames & Fingertip Dots
+    if (trackingVisible) {
       this.renderTrackingLayer(ctx, width, height, gestureData);
     }
 
-    // 4. Render Right Hand Crosshair Badges
-    this.renderEffectBadges(ctx, width, height, now);
-
-    // 5. Render Left Hand Floating Typography Layer
+    // 3. Draw Floating Text Typography Layer
     this.renderFloatingTextLayer(ctx, width, height, now);
   }
 
-  // Fingertip Tracking Visuals (SPEC Section 5.3)
+  /**
+   * SPEC Section 8: Fingertip dots & Coordinate Frames for both hands
+   */
   private renderTrackingLayer(
     ctx: CanvasRenderingContext2D,
     width: number,
     height: number,
-    gestureData: { Left: HandGestureData; Right: HandGestureData }
+    gestureData: { left: HandGestureData; right: HandGestureData }
   ): void {
-    for (const handKey of ['Left', 'Right'] as const) {
+    // Base scale relative to 1080p (SPEC Section 8.1)
+    const refDim = Math.min(width, height);
+    const scale = Math.max(0.6, refDim / 1080);
+
+    const normalRadius = 7 * scale;
+    const approachingRadius = 9 * scale;
+    const activeRadius = 12 * scale;
+    const RED = '#FF0000';
+
+    for (const handKey of ['left', 'right'] as const) {
       const hand = gestureData[handKey];
-      if (!hand.detected) continue;
+      if (!hand.detected) {
+        this.smoothedBoxes[handKey].initialized = false;
+        continue;
+      }
 
       const ft = hand.fingertips;
-      const thumbX = ft.thumb.x * width;
-      const thumbY = ft.thumb.y * height;
 
-      // Finger tips array
-      const tips = [
-        { name: 'thumb', pt: ft.thumb, isThumb: true },
-        { name: 'index', pt: ft.index, isThumb: false },
-        { name: 'middle', pt: ft.middle, isThumb: false },
-        { name: 'ring', pt: ft.ring, isThumb: false },
-        { name: 'pinky', pt: ft.pinky, isThumb: false },
-      ];
+      // 1. Coordinate Frame (SPEC Section 8.2)
+      if (hand.boundingBox) {
+        const rawBox = hand.boundingBox;
+        // Expand bounding box by ~18%
+        const boxW = rawBox.maxX - rawBox.minX;
+        const boxH = rawBox.maxY - rawBox.minY;
+        const padX = Math.max(boxW * 0.18, 0.04);
+        const padY = Math.max(boxH * 0.18, 0.04);
 
-      // Proximity line when approaching or armed
+        const targetMinX = Math.max(0, rawBox.minX - padX);
+        const targetMinY = Math.max(0, rawBox.minY - padY);
+        const targetMaxX = Math.min(1, rawBox.maxX + padX);
+        const targetMaxY = Math.min(1, rawBox.maxY + padY);
+
+        const smooth = this.smoothedBoxes[handKey];
+        if (!smooth.initialized) {
+          smooth.minX = targetMinX;
+          smooth.minY = targetMinY;
+          smooth.maxX = targetMaxX;
+          smooth.maxY = targetMaxY;
+          smooth.initialized = true;
+        } else {
+          // Lerp for smooth box motion
+          const lerpFactor = 0.35;
+          smooth.minX += (targetMinX - smooth.minX) * lerpFactor;
+          smooth.minY += (targetMinY - smooth.minY) * lerpFactor;
+          smooth.maxX += (targetMaxX - smooth.maxX) * lerpFactor;
+          smooth.maxY += (targetMaxY - smooth.maxY) * lerpFactor;
+        }
+
+        const x1 = smooth.minX * width;
+        const y1 = smooth.minY * height;
+        const x2 = smooth.maxX * width;
+        const y2 = smooth.maxY * height;
+        const bw = x2 - x1;
+        const bh = y2 - y1;
+
+        // Draw 4 corner brackets
+        const cornerLen = Math.min(bw * 0.22, bh * 0.22, 28 * scale);
+        ctx.save();
+        ctx.strokeStyle = RED;
+        ctx.lineWidth = Math.max(2, 2.5 * scale);
+        ctx.lineCap = 'square';
+        ctx.lineJoin = 'miter';
+
+        // Top-Left corner
+        ctx.beginPath();
+        ctx.moveTo(x1, y1 + cornerLen);
+        ctx.lineTo(x1, y1);
+        ctx.lineTo(x1 + cornerLen, y1);
+        ctx.stroke();
+
+        // Top-Right corner
+        ctx.beginPath();
+        ctx.moveTo(x2 - cornerLen, y1);
+        ctx.lineTo(x2, y1);
+        ctx.lineTo(x2, y1 + cornerLen);
+        ctx.stroke();
+
+        // Bottom-Left corner
+        ctx.beginPath();
+        ctx.moveTo(x1, y2 - cornerLen);
+        ctx.lineTo(x1, y2);
+        ctx.lineTo(x1 + cornerLen, y2);
+        ctx.stroke();
+
+        // Bottom-Right corner
+        ctx.beginPath();
+        ctx.moveTo(x2 - cornerLen, y2);
+        ctx.lineTo(x2, y2);
+        ctx.lineTo(x2, y2 - cornerLen);
+        ctx.stroke();
+
+        // Hand Label: L or R
+        ctx.font = `700 ${Math.round(13 * scale)}px 'JetBrains Mono', monospace`;
+        ctx.fillStyle = RED;
+        ctx.textBaseline = 'top';
+        const labelText = handKey === 'left' ? 'L' : 'R';
+        ctx.fillText(labelText, x1 + 6 * scale, y1 + 6 * scale);
+
+        // Crosshair at pinch center (or hand center if not pinching)
+        const crossCenter = hand.pinchCenter || { x: (smooth.minX + smooth.maxX) / 2, y: (smooth.minY + smooth.maxY) / 2 };
+        const cx = crossCenter.x * width;
+        const cy = crossCenter.y * height;
+        const crossSize = 10 * scale;
+
+        ctx.strokeStyle = 'rgba(255, 0, 0, 0.75)';
+        ctx.lineWidth = Math.max(1.5, 1.8 * scale);
+        ctx.beginPath();
+        ctx.moveTo(cx - crossSize, cy);
+        ctx.lineTo(cx + crossSize, cy);
+        ctx.moveTo(cx, cy - crossSize);
+        ctx.lineTo(cx, cy + crossSize);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // 2. Proximity line when approaching, arming, or active
       if (hand.state === 'APPROACHING' || hand.state === 'ARMING' || hand.state === 'ACTIVE') {
         const targetTip = hand.activeFinger ? ft[hand.activeFinger] : null;
         if (targetTip) {
+          const thumbX = ft.thumb.x * width;
+          const thumbY = ft.thumb.y * height;
           const targetX = targetTip.x * width;
           const targetY = targetTip.y * height;
-
-          const alpha = hand.state === 'ACTIVE'
-            ? 0.95
-            : hand.state === 'ARMING'
-            ? 0.85
-            : Math.max(0.2, 1.0 - hand.proximityDistance);
 
           ctx.save();
           ctx.beginPath();
           ctx.moveTo(thumbX, thumbY);
           ctx.lineTo(targetX, targetY);
-          ctx.strokeStyle = `rgba(255, 51, 51, ${alpha})`;
-          ctx.lineWidth = hand.state === 'ACTIVE' ? 2.5 : 1.2;
-          ctx.setLineDash(hand.state === 'ARMING' ? [4, 3] : []);
+          ctx.strokeStyle = RED;
+          ctx.lineWidth = hand.state === 'ACTIVE' ? 3 * scale : 1.8 * scale;
+          if (hand.state === 'ARMING') {
+            ctx.setLineDash([4 * scale, 3 * scale]);
+          }
           ctx.stroke();
           ctx.restore();
         }
       }
 
-      // Draw exactly 5 fingertip points
+      // 3. Fingertip dots: 5 tips (thumb, index, middle, ring, pinky)
+      const tips = [
+        { name: 'thumb', pt: ft.thumb },
+        { name: 'index', pt: ft.index },
+        { name: 'middle', pt: ft.middle },
+        { name: 'ring', pt: ft.ring },
+        { name: 'pinky', pt: ft.pinky },
+      ];
+
       for (const tip of tips) {
         const px = tip.pt.x * width;
         const py = tip.pt.y * height;
 
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(px, py, 3.5, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff3333';
-        ctx.shadowColor = 'rgba(255, 51, 51, 0.6)';
-        ctx.shadowBlur = 6;
-        ctx.fill();
-        ctx.restore();
-      }
+        let r = normalRadius;
+        const isTarget = hand.activeFinger === tip.name || tip.name === 'thumb';
 
-      // If active pinch, draw merged contact node
-      if (hand.state === 'ACTIVE' && hand.pinchCenter) {
-        const cx = hand.pinchCenter.x * width;
-        const cy = hand.pinchCenter.y * height;
+        if (hand.state === 'ACTIVE' && isTarget) {
+          r = activeRadius;
+        } else if ((hand.state === 'ARMING' || hand.state === 'APPROACHING') && isTarget) {
+          r = approachingRadius;
+        }
 
         ctx.save();
         ctx.beginPath();
-        ctx.arc(cx, cy, 6, 0, Math.PI * 2);
-        ctx.fillStyle = '#ff2222';
-        ctx.shadowColor = '#ff3333';
-        ctx.shadowBlur = 12;
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fillStyle = RED;
         ctx.fill();
-
-        // Pulsing ring
-        ctx.beginPath();
-        ctx.arc(cx, cy, 11, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(255, 51, 51, 0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
         ctx.restore();
       }
     }
   }
 
-  // Right hand X/Y axes & confirmation tag (fades out in ~500ms)
-  private renderEffectBadges(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    now: number
-  ): void {
-    const BADGE_DURATION = 550; // ms
-
-    this.effectBadges = this.effectBadges.filter((b) => now - b.spawnTime < BADGE_DURATION);
-
-    for (const b of this.effectBadges) {
-      const elapsed = now - b.spawnTime;
-      const alpha = Math.max(0, 1 - elapsed / BADGE_DURATION);
-      const px = b.x * width;
-      const py = b.y * height;
-      const crossSize = 16;
-
-      ctx.save();
-      ctx.strokeStyle = `rgba(255, 51, 51, ${alpha * 0.8})`;
-      ctx.lineWidth = 1;
-
-      // Fine X/Y crosshair axes
-      ctx.beginPath();
-      ctx.moveTo(px - crossSize, py);
-      ctx.lineTo(px + crossSize, py);
-      ctx.moveTo(px, py - crossSize);
-      ctx.lineTo(px, py + crossSize);
-      ctx.stroke();
-
-      // Technical label
-      ctx.font = "10px 'JetBrains Mono', monospace";
-      ctx.fillStyle = `rgba(255, 60, 60, ${alpha})`;
-      ctx.fillText(`[${b.label}]`, px + 8, py - 8);
-      ctx.restore();
-    }
-  }
-
-  // Left hand typography floating layer (SPEC Section 5.6)
+  /**
+   * SPEC Section 9: Floating text typography layer
+   */
   private renderFloatingTextLayer(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -273,24 +322,22 @@ export class VisualRenderer {
     now: number
   ): void {
     const toDelete: string[] = [];
+    const scale = Math.max(0.6, Math.min(width, height) / 1080);
 
     this.floatingTexts.forEach((item, key) => {
-      const tx = item.targetX * width;
-      const ty = item.targetY * height;
-
-      // Spring physics follow hand
-      const dx = tx - item.x;
-      const dy = ty - item.y;
-      item.vx += dx * 0.18;
-      item.vy += dy * 0.18;
-      item.vx *= 0.65;
-      item.vy *= 0.65;
+      // Spring follow
+      const dx = item.targetX - item.x;
+      const dy = item.targetY - item.y;
+      item.vx += dx * 0.22;
+      item.vy += dy * 0.22;
+      item.vx *= 0.62;
+      item.vy *= 0.62;
       item.x += item.vx;
       item.y += item.vy;
 
       if (!item.active) {
         const elapsedSinceRelease = now - item.releaseTime;
-        const FADE_DURATION = 650;
+        const FADE_DURATION = 550; // ms
         item.alpha = Math.max(0, 1 - elapsedSinceRelease / FADE_DURATION);
         if (item.alpha <= 0) {
           toDelete.push(key);
@@ -298,38 +345,36 @@ export class VisualRenderer {
         }
       }
 
-      // Render crisp typographical layout
       ctx.save();
-      ctx.font = "600 22px 'JetBrains Mono', 'Space Grotesk', monospace";
+      const fontSize = Math.round(24 * scale);
+      ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
       ctx.textBaseline = 'middle';
 
       const text = item.text;
       const metrics = ctx.measureText(text);
-      const padding = 12;
-      const boxW = metrics.width + padding * 2;
-      const boxH = 36;
-      const drawX = item.x + 20;
+      const paddingH = 14 * scale;
+      const boxW = metrics.width + paddingH * 2;
+      const boxH = 40 * scale;
+      const drawX = item.x + 20 * scale;
       const drawY = item.y - boxH / 2;
 
-      // Subtle translucent backing
-      ctx.fillStyle = `rgba(10, 10, 10, ${item.alpha * 0.75})`;
+      // Dark translucent backing
+      ctx.fillStyle = `rgba(7, 17, 31, ${item.alpha * 0.85})`;
       ctx.fillRect(drawX, drawY, boxW, boxH);
 
-      // Fine red accent border
-      ctx.strokeStyle = `rgba(255, 51, 51, ${item.alpha * 0.5})`;
-      ctx.lineWidth = 1;
+      // Red corner brackets / accent
+      ctx.strokeStyle = `rgba(255, 0, 0, ${item.alpha * 0.9})`;
+      ctx.lineWidth = 1.5 * scale;
       ctx.strokeRect(drawX, drawY, boxW, boxH);
 
-      // Clean white typography with subtle glow
-      ctx.fillStyle = `rgba(245, 245, 245, ${item.alpha})`;
-      ctx.shadowColor = `rgba(255, 255, 255, ${item.alpha * 0.3})`;
-      ctx.shadowBlur = 8;
-      ctx.fillText(text, drawX + padding, item.y);
+      // White text
+      ctx.fillStyle = `rgba(255, 255, 255, ${item.alpha})`;
+      ctx.fillText(text, drawX + paddingH, item.y);
 
-      // Small index marker
-      ctx.font = "9px 'JetBrains Mono', monospace";
-      ctx.fillStyle = `rgba(255, 51, 51, ${item.alpha * 0.9})`;
-      ctx.fillText('PINCH:LEFT', drawX + padding, drawY - 4);
+      // Small hand indicator
+      ctx.font = `600 ${Math.round(10 * scale)}px 'JetBrains Mono', monospace`;
+      ctx.fillStyle = `rgba(255, 0, 0, ${item.alpha * 0.9})`;
+      ctx.fillText(`PINCH:${item.hand.toUpperCase()}`, drawX + paddingH, drawY - 6 * scale);
 
       ctx.restore();
     });
