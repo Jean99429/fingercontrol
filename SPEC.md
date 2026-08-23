@@ -8,15 +8,15 @@
 
 ## 1. 产品定义
 
-fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `UPLOAD VIDEO` 两种输入模式。摄像头模式实时识别和合成；上传模式逐帧分析用户选择的任意本地视频。两种模式都在正确位置叠加自定义文字、播放 Jean 提供的真实音频，并允许录制或导出结果。
+fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `UPLOAD VIDEO` 两种输入模式。摄像头模式实时识别和合成；上传模式逐帧分析用户选择的任意本地视频。两种模式都在正确位置叠加自定义文字，并完整复制 Fingertalk 的浏览器语音触发逻辑直接朗读单词。
 
 ### 1.1 核心目标
 
 - 识别实时摄像头或上传视频中的左右手。
 - 识别每只手的拇指与食指、中指、无名指、小指接触。
 - 左右手各显示四个固定文字输入框，共八个单词。
-- 每个单词可以绑定一个真实音频文件。
-- 在触发位置显示文字并播放对应音频。
+- 每个单词直接使用浏览器系统英文语音朗读。
+- 在触发位置显示文字并立即发音。
 - 显示清楚的大号正红指尖点和双手坐标框。
 - 将视频、文字、追踪层和音频合成为可下载的最终文件。
 
@@ -26,8 +26,8 @@ fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `
 - 不在 fingercontrol 中生成 ASCII、Dither、粒子、RGB、Glyph Dissolve 或其他视觉效果。
 - 不包含人物分割或 WebGL 效果库。
 - 不再让右手控制视觉效果；左右手功能完全一致。
-- 不使用浏览器 TTS、Gemini TTS 或自动生成语音。
-- 不用提示音冒充单词语音。
+- 不使用 Gemini TTS、外部语音 API或上传音频文件。
+- 不用提示音或效果音冒充单词语音。
 - 不提供校准页、账号、数据库或多人协作。
 - 不修改作品集网站。
 
@@ -44,14 +44,14 @@ fingercontrol
   ├─ MediaPipe 逐帧分析识别视频
   ├─ 生成手势事件时间轴
   ├─ 在显示视频上合成追踪层与文字
-  ├─ 混入真实音频文件
+  ├─ 在触发时间点调用浏览器 Speech Synthesis
   └─ 预览并导出最终视频
 
 CAMERA
   ├─ 选择摄像头设备
   ├─ 实时 Hand Landmarker
   ├─ 正常摄像头画面 + 追踪层 + 文字
-  ├─ 触发真实音频
+  ├─ 触发浏览器语音
   └─ 内置录制或系统录屏
 ```
 
@@ -64,8 +64,8 @@ CAMERA
 - MediaPipe `@mediapipe/tasks-vision`
 - Hand Landmarker：`runningMode: VIDEO`，`numHands: 2`
 - Canvas 2D：视频、文字和追踪层的最终合成画布
-- Web Audio API：解码、定时和混合真实音频文件
-- `HTMLCanvasElement.captureStream()` + `MediaRecorder`：浏览器内导出
+- Web Speech API：与 Fingertalk 相同的系统语音、解锁和触发逻辑
+- `getDisplayMedia({audio:true})`、Canvas 与 MediaRecorder：录入画面和浏览器语音
 - localStorage：保存文字与轻量 UI 配置
 - `getUserMedia()`：仅用于 CAMERA 模式
 - 目标平台：桌面 Chrome
@@ -79,7 +79,7 @@ CAMERA
 - 画面水平镜像由 `MIRRORED` 设置控制。
 - Hand Landmarker 使用 VIDEO 模式实时处理摄像头帧。
 - 显示原始 RGB 摄像头画面，不做灰度、背景替换或视觉效果。
-- 追踪点、坐标框、文字和真实音频规则与上传模式完全一致。
+- 追踪点、坐标框、文字和浏览器语音规则与上传模式完全一致。
 - 可使用内置录制导出，或由 Jean 使用系统录屏。
 
 ### 3.3 UPLOAD VIDEO 的两条视频轨
@@ -160,25 +160,33 @@ UPLOAD VIDEO 模式显示：
 每一行：
 
 - 左侧是固定手指名称。
-- 中间是一个直接输入单词的文字框。
-- 右侧是一个紧凑的音频上传/预听按钮。
+- 右侧是一个直接输入单词的文字框。
 - 不显示手指映射下拉框。
-- 不显示声音模式、TTS 声音、语速、音量或效果设置。
+- 不显示声音模式、声音选择、语速、音高、音量或效果设置。
 
 拇指只作为触发器，不显示为输入行。
 
-### 5.4 真实音频文件
+### 5.4 Fingertalk 语音系统
 
-- 接受 WAV、MP3、M4A、AAC 和浏览器可解码格式。
-- 音频由 Jean 在外部准备，内容就是对应单词的真实朗读。
-- 设置页必须允许预听和清除。
-- 未绑定音频时仍可显示文字，但必须显示简洁的 `NO AUDIO` 状态。
-- 不自动补提示音，也不调用任何 TTS。
-- 文件只在本地处理，不上传服务器。
+- 使用 `window.speechSynthesis` 和 `SpeechSynthesisUtterance`。
+- 不提供声音选择 UI；程序按 Fingertalk 的规则自动选择。
+- 女性声音优先池：Samantha、Karen、Moira、Tessa、Victoria、Allison、Ava、Susan、Zoe、Kate、Serena、Fiona。
+- 男性声音优先池：Alex、Daniel、Aaron、Fred、Tom、Arthur、Oliver、Gordon、Nathan、Rishi、Lee。
+- 排除 novelty voices：Bad News、Good News、Bahh、Bells、Boing、Bubbles、Cellos、Deranged、Jester、Organ、Superstar、Trinoids、Whisper、Wobble、Zarvox、Albert、Flo、Grandma、Grandpa、Eddy、Reed、Rocko、Sandy、Shelley、Junior。
+- 按输入顺序交替女性/男性声音，并避免连续使用同一个 voice。
+- 女性 pitch：`1.08 + (index % 3) * 0.14`。
+- 男性 pitch：`0.80 + (index % 3) * 0.12`。
+- rate：`0.93 + (index % 2) * 0.06`。
+- volume：`1`。
+- `newjeans` 在发音前替换为 `new jeans`。
+- `speechSynthesis.onvoiceschanged` 后重新分配 voices。
+- 点击模式主按钮时执行 `speechSynthesis.resume()`、刷新 voices，并 speak 一个空白 utterance 完成用户手势解锁。
+- 每次发音前执行 `speechSynthesis.cancel()`，再立即 speak 当前单词。
+- 语音异常必须记录并显示调试信息，禁止静默吞掉错误。
 
 ### 5.5 设置保存
 
-localStorage 保存八个文字、启用状态、镜像设置和追踪层显示设置。浏览器不持久保存本地视频和音频文件；刷新后需要重新选择。
+localStorage 保存八个文字、启用状态、镜像设置和追踪层显示设置。浏览器不持久保存本地视频文件；刷新后需要重新选择视频。
 
 ## 6. SCREEN 2 — LIVE / PREVIEW / EXPORT
 
@@ -186,7 +194,7 @@ localStorage 保存八个文字、启用状态、镜像设置和追踪层显示�
 
 - CAMERA 模式显示正常实时摄像头；UPLOAD VIDEO 模式原样显示上传的视频。
 - 在同一个 Canvas 中绘制视频、追踪标记和文字。
-- 声音由 Web Audio 时间轴同步播放。
+- 声音由浏览器 Speech Synthesis 在实时手势或已分析的事件时间点触发。
 - 不添加任何新的视觉滤镜。
 
 ### 6.2 精简控制
@@ -264,35 +272,38 @@ ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传�
 某一行进入 ACTIVE 时：
 
 1. 在拇指与目标手指中点附近生成输入框中的文字。
-2. 播放该行绑定的真实音频一次。
+2. 使用该行自动分配的系统 voice 朗读文字一次。
 3. 文字在短时间内平滑跟随手部位置。
 4. 松开后短暂停留并淡出。
 5. 单次捏合不重复创建文字或播放音频。
 
 未触发时不显示任何输入框文字。
 
-## 10. 声音与同步
+## 10. Fingertalk 语音触发
 
 ### 10.1 唯一声音来源
 
-- 每一行绑定的真实音频文件。
-- 可选保留输入视频已有音轨。
+- 浏览器 Web Speech API 的系统英文 voices。
+- 可选保留上传视频已有音轨。
 
-禁止 Browser Speech Synthesis、Gemini TTS，以及用点击声、提示音或效果音代替单词朗读。
+禁止 Gemini TTS、外部语音 API、上传音频文件，以及用点击声、提示音或效果音代替单词朗读。
 
-### 10.2 实现
+### 10.2 触发实现
 
-- 使用 Web Audio API 将上传音频解码为 `AudioBuffer`。
-- 根据手势事件时间戳安排播放。
-- 拖动进度、暂停、返回设置或重新分析时必须正确停止并重新同步音频。
-- 多事件重叠时允许叠加，但要防止削波。
+- 使用 `pinchNow[]` 和上一帧状态比较，仅在 `false → true` 的瞬间触发。
+- 每个单词维护 `lastSpoke`；距离上次发音不足 450ms 时忽略。
+- 触发函数直接调用 `speechSynthesis.cancel()` 和 `speechSynthesis.speak(utterance)`。
+- 不把语音藏在 `audioMode`、左右手分支或旧效果状态后面。
+- 左右手完全相同，八个非空输入框均可直接发音。
+- 双手心形保持超过 350ms 时，按左右面板和手指顺序将所有非空单词排队朗读；完成前不响应单个单词；心形触发冷却 3500ms。
 
-### 10.3 导出
+### 10.3 录制语音
 
-- 将 Canvas 视频流与 Web Audio 混音合并为同一个 `MediaStream`。
-- 使用 `MediaRecorder.isTypeSupported()` 选择浏览器实际支持的编码。
-- MVP 至少稳定导出带声音的 WebM。
-- 浏览器真正支持兼容 MP4 编码时才提供 MP4，禁止只改扩展名。
+- Speech Synthesis 不进入 Web Audio graph，不能假设 Canvas capture 会自动包含它。
+- 内置录制采用与 Fingertalk 相同的 `getDisplayMedia({video:true, audio:true, preferCurrentTab:true, selfBrowserSurface:'include'})` 路线。
+- 明确提示 Jean 选择当前标签页并开启“共享标签页音频”。
+- 如浏览器无法捕获系统语音，使用 OBS 或系统录屏并开启系统音频。
+- 使用 `MediaRecorder.isTypeSupported()` 选择真实支持的编码，不伪装 MP4。
 
 ## 11. 数据模型
 
@@ -306,8 +317,9 @@ type ContentSlot = {
   finger: Finger;
   enabled: boolean;
   text: string;
-  audioFile?: File;
-  audioFileName?: string;
+  voiceURI?: string;
+  pitch?: number;
+  rate?: number;
 };
 
 type GestureEvent = {
@@ -368,7 +380,7 @@ type FingercontrolConfig = {
 - Person Segmentation。
 - EffectEngine 和全部视觉效果。
 - 左手/右手不同业务逻辑。
-- TTS 设置与 Speech Synthesis。
+- 旧版可编辑 TTS 设置、音频文件上传和效果音；保留 Speech Synthesis 但按 Fingertalk 逻辑重写。
 - 旧版 `ENABLE CAMERA` 流程和旧版视觉 PERFORMANCE 页面；以新的模式选择和 LIVE/PREVIEW 页面替代。
 
 保留并改造：
@@ -387,7 +399,7 @@ type FingercontrolConfig = {
 - 重建双栏 SETUP。
 - CAMERA 设备选择与实时输入。
 - 显示视频和可选识别视频上传。
-- 左右手八个固定文字输入框和紧凑音频按钮。
+- 左右手八个固定文字输入框。
 - 视频模式 Hand Landmarker。
 - 生成手势事件列表。
 
@@ -398,13 +410,13 @@ type FingercontrolConfig = {
 - 大号正红指尖点。
 - 双手坐标框。
 - 文字出现与淡出。
-- 真实音频同步。
+- Fingertalk 式语音直接触发。
 
 ### Phase 3 — 导出与修正
 
 - 轻量事件时间轴。
 - 删除误触事件。
-- Canvas + Web Audio 导出。
+- 标签页画面 + 标签页音频录制验证。
 - WebM 验证与可选 MP4。
 
 ## 16. MVP 验收标准
@@ -415,8 +427,8 @@ type FingercontrolConfig = {
 - 可在 CAMERA 和 UPLOAD VIDEO 之间清楚切换。
 - 左手和右手是两个并排、等宽的大框。
 - 每只手只有 INDEX、MIDDLE、RING、PINKY 四个文字输入框。
-- 每行右侧可上传、预听或清除真实音频。
-- 不存在手指映射、视觉效果选择或 TTS 设置。
+- 每行只有固定手指名称和文字输入框。
+- 不存在手指映射、视觉效果选择、音频上传或声音参数设置。
 
 ### 输入与手势
 
@@ -441,8 +453,9 @@ type FingercontrolConfig = {
 
 - 文字出现在对应捏合位置。
 - 左右手行为一致。
-- 触发时播放上传的真实音频，而不是效果音。
-- 未提供音频时明确静音，不偷偷替代。
-- 导出文件包含原上传视频画面、追踪层、文字和声音。
+- 触发时直接朗读输入框单词，而不是播放效果音。
+- 八个单词自动交替使用 Fingertalk 式男女系统声音。
+- 主按钮点击后必须先解锁 Speech Synthesis，不能静默失败。
+- 导出或录屏结果包含原画面、追踪层、文字和可听见的系统语音。
 - 导出视频时长与输入视频一致。
 - 至少稳定导出可播放的带声音 WebM。

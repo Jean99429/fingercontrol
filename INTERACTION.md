@@ -2,7 +2,7 @@
 
 ## 项目边界
 
-fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供 `CAMERA` 与 `UPLOAD VIDEO` 两种输入模式，两种模式都只负责识别手势、叠加文字和播放真实音频。
+fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供 `CAMERA` 与 `UPLOAD VIDEO` 两种输入模式，两种模式都只负责识别手势、叠加文字和使用与 Fingertalk 相同的浏览器语音直接朗读单词。
 
 上传视频链路：
 
@@ -18,7 +18,7 @@ fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供
 2. 请求摄像头权限并选择设备。
 3. 实时识别双手捏合动作。
 4. 在正常摄像头画面上实时叠加文字、指尖点和双手坐标框。
-5. 触发时播放对应真实音频。
+5. 触发时直接朗读对应输入框的单词。
 6. 可在浏览器中录制并导出，或使用系统录屏。
 
 ## 双手统一交互
@@ -27,7 +27,7 @@ fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供
 - 拇指只作为触发器，不对应内容输入框。
 - 拇指分别接触食指、中指、无名指和小指。
 - 每只手有四个固定文字输入框，共八个单词。
-- 每行文字可以绑定一个真实音频文件。
+- 每行只输入文字，不上传音频文件。
 - 不再区分“左手控制文字、右手控制视觉效果”。
 - 单次捏合只触发一次；必须松开并经过冷却后才能再次触发。
 
@@ -65,10 +65,13 @@ fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供
 
 - 文字从拇指与目标手指的接触中点附近出现。
 - 文字短暂跟随手部位置，随后停留并淡出。
-- 每次触发同时播放该行绑定的真实音频文件。
-- 不使用浏览器 Speech Synthesis 或 Gemini TTS。
-- 不播放替代语音的提示音、点击音或合成效果音。
-- 音频内容由 Jean 在外部准备并上传。
+- 完整复制 Fingertalk 的浏览器 Speech Synthesis 语音逻辑，不调用 Gemini。
+- 使用系统英文声音池，优先 Samantha、Karen、Moira、Tessa、Victoria、Allison、Ava、Susan、Zoe、Kate、Serena、Fiona，以及 Alex、Daniel、Aaron、Fred、Tom、Arthur、Oliver、Gordon、Nathan、Rishi、Lee。
+- 八个单词按顺序交替分配女性和男性声音，并使用 Fingertalk 相同的 pitch 与 rate 变化。
+- 点击 `START CAMERA` 或 `ANALYZE VIDEO` 时先执行 `speechSynthesis.resume()`，刷新 voices，并播放一个空白 utterance 解锁语音。
+- 从“未捏合”进入“捏合”的瞬间直接朗读，450ms 内不重复触发。
+- 朗读新单词前先 `speechSynthesis.cancel()`，避免队列积压。
+- 不播放提示音、点击音或效果音。
 
 ## 设置页视觉方向
 
@@ -79,7 +82,7 @@ fingercontrol 不再负责生成 ASCII、粒子或其他视觉效果。它提供
 - 顶部只有项目名和一句简短说明。
 - 中部只有两个并排的大框：左手在左、右手在右。
 - 每个框固定四行：食指、中指、无名指、小指。
-- 每行主体就是一个文字输入框；真实音频上传是输入框右侧的小按钮。
+- 每行只有手指名称和一个文字输入框，与 Fingertalk 一样直接。
 - 不增加手指映射、效果选择、声音模式、语速或音量等设置。
 - 顶部使用简洁的 `CAMERA / UPLOAD VIDEO` 二选一切换。
 - 底部只有一个主按钮；摄像头模式显示 `START CAMERA →`，上传模式显示 `ANALYZE VIDEO →`。
