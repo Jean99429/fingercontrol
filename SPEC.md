@@ -1,18 +1,18 @@
 # fingercontrol — Product & Technical Specification
 
-状态：需求规格 v2（离线上传视频方案）
+状态：需求规格 v2.1（摄像头 / 上传视频双模式）
 项目路径：`/Users/jean/Documents/ChatGPT/fingercontrol`  
 归属：独立工具，不属于 `portfolio WEB OF JEAN`
 
-本文档是 fingercontrol 的唯一权威规格。AI Studio 提示词、代码重构、视觉审核和验收均以本文为准。旧版“实时摄像头 + 左手文字 + 右手视觉效果”方案已废弃。
+本文档是 fingercontrol 的唯一权威规格。AI Studio 提示词、代码重构、视觉审核和验收均以本文为准。旧版“左手文字 + 右手视觉效果”方案已废弃；实时摄像头作为输入模式保留，但不再生成视觉效果。
 
 ## 1. 产品定义
 
-fingercontrol 是一个桌面端视频后期工具。Jean 先在 Efecto 中完成始终开启的 ASCII 视觉效果，再把视频上传到 fingercontrol。fingercontrol 对视频逐帧识别双手捏合动作，在正确时间和位置叠加自定义文字、播放 Jean 提供的真实音频，并导出最终视频。
+fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `UPLOAD VIDEO` 两种输入模式。摄像头模式实时识别和合成；上传模式逐帧分析用户选择的任意本地视频。两种模式都在正确位置叠加自定义文字、播放 Jean 提供的真实音频，并允许录制或导出结果。
 
 ### 1.1 核心目标
 
-- 识别上传视频中的左右手。
+- 识别实时摄像头或上传视频中的左右手。
 - 识别每只手的拇指与食指、中指、无名指、小指接触。
 - 左右手各显示四个固定文字输入框，共八个单词。
 - 每个单词可以绑定一个真实音频文件。
@@ -22,7 +22,7 @@ fingercontrol 是一个桌面端视频后期工具。Jean 先在 Efecto 中完�
 
 ### 1.2 明确非目标
 
-- 不请求实时摄像头权限。
+- 摄像头权限只在 Jean 主动选择 `CAMERA` 并点击开始后请求。
 - 不在 fingercontrol 中生成 ASCII、Dither、粒子、RGB、Glyph Dissolve 或其他视觉效果。
 - 不包含人物分割或 WebGL 效果库。
 - 不再让右手控制视觉效果；左右手功能完全一致。
@@ -31,21 +31,28 @@ fingercontrol 是一个桌面端视频后期工具。Jean 先在 Efecto 中完�
 - 不提供校准页、账号、数据库或多人协作。
 - 不修改作品集网站。
 
-## 2. 制作流程
+## 2. 两种制作流程
 
 ```text
-拍摄原视频
-  ├─ Efecto 处理 → ASCII 显示视频（必选）
-  └─ 原视频 → 干净识别视频（可选但推荐）
+准备视频
+  ├─ 任意显示视频（必选）
+  └─ 同源干净识别视频（重度风格化画面时可选）
 
 fingercontrol
   ├─ 上传视频
   ├─ 配置左右手八个文字/音频行
   ├─ MediaPipe 逐帧分析识别视频
   ├─ 生成手势事件时间轴
-  ├─ 在 ASCII 显示视频上合成追踪层与文字
+  ├─ 在显示视频上合成追踪层与文字
   ├─ 混入真实音频文件
   └─ 预览并导出最终视频
+
+CAMERA
+  ├─ 选择摄像头设备
+  ├─ 实时 Hand Landmarker
+  ├─ 正常摄像头画面 + 追踪层 + 文字
+  ├─ 触发真实音频
+  └─ 内置录制或系统录屏
 ```
 
 ## 3. 技术架构
@@ -60,28 +67,38 @@ fingercontrol
 - Web Audio API：解码、定时和混合真实音频文件
 - `HTMLCanvasElement.captureStream()` + `MediaRecorder`：浏览器内导出
 - localStorage：保存文字与轻量 UI 配置
+- `getUserMedia()`：仅用于 CAMERA 模式
 - 目标平台：桌面 Chrome
 
-不需要 Three.js、人物分割、Shader 或实时摄像头纹理。
+不需要 Three.js、人物分割或 Shader。CAMERA 模式直接绘制原始摄像头画面，不添加滤镜。
 
-### 3.2 两条视频轨
+### 3.2 CAMERA 模式
+
+- 只有选择 CAMERA 并点击 `START CAMERA →` 后才请求权限。
+- 允许选择浏览器可用的摄像头设备。
+- 画面水平镜像由 `MIRRORED` 设置控制。
+- Hand Landmarker 使用 VIDEO 模式实时处理摄像头帧。
+- 显示原始 RGB 摄像头画面，不做灰度、背景替换或视觉效果。
+- 追踪点、坐标框、文字和真实音频规则与上传模式完全一致。
+- 可使用内置录制导出，或由 Jean 使用系统录屏。
+
+### 3.3 UPLOAD VIDEO 的两条视频轨
 
 #### `displayVideo`（必选）
 
-- Efecto 导出的 ASCII 视频。
+- 浏览器可解码的任意本地视频。
 - 用于预览与最终成片。
-- 视觉效果从第一帧到最后一帧一直存在。
-- fingercontrol 不改变其 ASCII 风格。
+- fingercontrol 原样使用其画面，不添加或改变视觉效果。
 
 #### `trackingVideo`（可选）
 
-- 同一段未经 ASCII 处理的原视频。
+- 与显示视频同步、手部轮廓更清楚的原视频。
 - 只用于 Hand Landmarker 推理，绝不绘制到最终画面。
 - 如果不存在，则使用 `displayVideo` 完成识别。
 
 双轨模式必须验证时长差不超过 100ms、宽高比一致、起始帧和剪辑点一致。失败时阻止分析并给出明确提示。
 
-### 3.3 分析方式
+### 3.4 上传视频分析方式
 
 - 根据视频时间戳顺序调用 `detectForVideo()`。
 - 识别过程显示明确进度，不要求实时播放速度。
@@ -93,9 +110,9 @@ fingercontrol
 应用只有两个主页面：
 
 1. `SETUP`
-2. `PREVIEW / EXPORT`
+2. `LIVE / PREVIEW / EXPORT`
 
-不增加欢迎页、实时表演页、效果选择页或校准页。
+不增加欢迎页、视觉效果选择页或校准页。CAMERA 的实时画面与 UPLOAD VIDEO 的预览共用第二个页面。
 
 ## 5. SCREEN 1 — SETUP
 
@@ -107,18 +124,27 @@ fingercontrol
 - 内容整体水平、垂直居中。
 - 主内容最大宽度约 840–960px。
 - 顶部：`fingercontrol` 标题和一行说明。
+- 标题下方是紧凑的 `CAMERA / UPLOAD VIDEO` 分段切换。
 - 视频上传区保持紧凑，不做巨大拖拽面板。
 - 中部：左右两个等宽、等高的配置框。
 - 左框为 `LEFT HAND`，右框为 `RIGHT HAND`。
 - 左手必须在页面左侧，右手必须在页面右侧。
-- 底部只有一个高优先级按钮：`ANALYZE VIDEO →`。
+- 底部只有一个高优先级按钮：CAMERA 模式为 `START CAMERA →`，UPLOAD VIDEO 模式为 `ANALYZE VIDEO →`。
 
-禁止旧版上下堆叠布局、视觉效果下拉框、摄像头按钮、多层工具栏、机器人贴纸、游戏 HUD 和发光渐变卡片。
+禁止旧版上下堆叠布局、视觉效果下拉框、多层工具栏、机器人贴纸、游戏 HUD 和发光渐变卡片。
 
-### 5.2 视频上传
+### 5.2 输入模式区域
 
-- `ASCII VIDEO`：必选。
-- `CLEAN TRACKING VIDEO`：可选，注明“ASCII 视频识别不稳定时使用”。
+CAMERA 模式显示：
+
+- 摄像头设备选择。
+- `MIRRORED` 开关。
+- 不显示视频上传框。
+
+UPLOAD VIDEO 模式显示：
+
+- `VIDEO`：必选，接受任意浏览器可解码的本地视频。
+- `CLEAN TRACKING VIDEO`：可选，注明“风格化视频识别不稳定时使用”。
 - 显示文件名、时长、分辨率和替换/删除操作。
 - 提供 `MIRRORED VIDEO` 开关，用于正确解释左右手和叠加坐标。
 
@@ -154,11 +180,11 @@ fingercontrol
 
 localStorage 保存八个文字、启用状态、镜像设置和追踪层显示设置。浏览器不持久保存本地视频和音频文件；刷新后需要重新选择。
 
-## 6. SCREEN 2 — PREVIEW / EXPORT
+## 6. SCREEN 2 — LIVE / PREVIEW / EXPORT
 
 ### 6.1 画面构成
 
-- ASCII 显示视频占据主要区域。
+- CAMERA 模式显示正常实时摄像头；UPLOAD VIDEO 模式原样显示上传的视频。
 - 在同一个 Canvas 中绘制视频、追踪标记和文字。
 - 声音由 Web Audio 时间轴同步播放。
 - 不添加任何新的视觉滤镜。
@@ -170,7 +196,7 @@ localStorage 保存八个文字、启用状态、镜像设置和追踪层显示�
 - `BACK TO SETUP`
 - 播放/暂停
 - 时间轴拖动
-- `REANALYZE`
+- 上传模式显示 `REANALYZE`；摄像头模式显示 `STOP CAMERA`
 - `EXPORT VIDEO`
 
 允许显示轻量事件时间轴，用于查看检测结果和删除明显误触。调试日志和模型参数默认隐藏。
@@ -205,9 +231,9 @@ IDLE → APPROACHING → ARMING → ACTIVE → RELEASING → IDLE
 - 松开并完成冷却后才能再次触发。
 - 多根手指同时靠近时选择归一化距离最近者。
 
-### 7.3 ASCII 视频识别风险
+### 7.3 风格化视频识别风险
 
-ASCII 字符可能破坏手指边缘。实现必须优先支持可选干净识别视频，而不是不断降低置信度制造误识别。只上传 ASCII 视频时允许尝试；识别率过低则明确建议上传干净识别视频。
+ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传模式必须支持可选干净识别视频，而不是不断降低置信度制造误识别。普通视频直接使用自身识别；摄像头模式直接分析实时画面。
 
 ## 8. 追踪视觉规范
 
@@ -325,12 +351,13 @@ type FingercontrolConfig = {
 
 ## 13. 错误与降级
 
-- 显示视频缺失：禁止分析。
+- CAMERA 模式摄像头被拒绝或不可用：停留在设置页并说明如何处理。
+- UPLOAD VIDEO 模式显示视频缺失：禁止分析。
 - 视频无法解码：说明支持格式并允许替换。
 - 双轨时长不一致：阻止分析并显示差值。
 - Hand Landmarker 加载失败：提供重试。
 - 只识别到一只手：保留已识别事件并明确报告。
-- ASCII 视频识别率过低：建议上传干净识别视频。
+- 风格化视频识别率过低：建议上传干净识别视频。
 - 音频无法解码：标记具体行，不用提示音代替。
 - 不支持 MP4：导出真实 WebM 并清楚标注。
 
@@ -338,12 +365,11 @@ type FingercontrolConfig = {
 
 下一轮实现必须删除或停用旧版：
 
-- 实时摄像头权限与摄像头选择。
 - Person Segmentation。
 - EffectEngine 和全部视觉效果。
 - 左手/右手不同业务逻辑。
 - TTS 设置与 Speech Synthesis。
-- `ENABLE CAMERA` 和实时 PERFORMANCE 页面。
+- 旧版 `ENABLE CAMERA` 流程和旧版视觉 PERFORMANCE 页面；以新的模式选择和 LIVE/PREVIEW 页面替代。
 
 保留并改造：
 
@@ -356,9 +382,10 @@ type FingercontrolConfig = {
 
 ## 15. 实施阶段
 
-### Phase 1 — 新设置页与视频分析
+### Phase 1 — 新设置页与双输入模式
 
 - 重建双栏 SETUP。
+- CAMERA 设备选择与实时输入。
 - 显示视频和可选识别视频上传。
 - 左右手八个固定文字输入框和紧凑音频按钮。
 - 视频模式 Hand Landmarker。
@@ -366,7 +393,8 @@ type FingercontrolConfig = {
 
 ### Phase 2 — 合成预览
 
-- ASCII 视频 Canvas 播放。
+- 正常摄像头 Canvas 实时画面。
+- 上传视频 Canvas 播放。
 - 大号正红指尖点。
 - 双手坐标框。
 - 文字出现与淡出。
@@ -384,14 +412,17 @@ type FingercontrolConfig = {
 ### 设置页
 
 - 页面采用参考图式居中布局，不再上下堆叠。
+- 可在 CAMERA 和 UPLOAD VIDEO 之间清楚切换。
 - 左手和右手是两个并排、等宽的大框。
 - 每只手只有 INDEX、MIDDLE、RING、PINKY 四个文字输入框。
 - 每行右侧可上传、预听或清除真实音频。
-- 不存在手指映射、视觉效果选择、TTS 设置或摄像头按钮。
+- 不存在手指映射、视觉效果选择或 TTS 设置。
 
-### 视频与手势
+### 输入与手势
 
-- 能上传 Efecto ASCII 视频和可选干净识别视频。
+- CAMERA 模式能选择摄像头并实时运行。
+- CAMERA 模式显示正常原色画面，不添加任何效果。
+- 能上传任意本地视频和可选干净识别视频。
 - 正确区分左右手。
 - 两只手都能触发文字和音频。
 - 八种拇指接触均可识别。
@@ -412,6 +443,6 @@ type FingercontrolConfig = {
 - 左右手行为一致。
 - 触发时播放上传的真实音频，而不是效果音。
 - 未提供音频时明确静音，不偷偷替代。
-- 导出文件包含 ASCII 视频、追踪层、文字和声音。
+- 导出文件包含原上传视频画面、追踪层、文字和声音。
 - 导出视频时长与输入视频一致。
 - 至少稳定导出可播放的带声音 WebM。
