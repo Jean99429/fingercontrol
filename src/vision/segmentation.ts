@@ -1,5 +1,23 @@
 import { FilesetResolver, ImageSegmenter } from '@mediapipe/tasks-vision';
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve(fallbackValue);
+    }, ms);
+
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch(() => {
+        clearTimeout(timer);
+        resolve(fallbackValue);
+      });
+  });
+}
+
 export class PersonSegmentationManager {
   private segmenter: ImageSegmenter | null = null;
   private isLoaded: boolean = false;
@@ -17,27 +35,8 @@ export class PersonSegmentationManager {
     if (this.isInitializing) return false;
 
     this.isInitializing = true;
-    try {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-      );
 
-      this.segmenter = await ImageSegmenter.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        outputCategoryMask: true,
-        outputConfidenceMasks: false,
-      });
-
-      this.isLoaded = true;
-      this.isInitializing = false;
-      return true;
-    } catch (err) {
-      console.warn('ImageSegmenter GPU load failed, trying CPU fallback:', err);
+    const loadTask = async (): Promise<boolean> => {
       try {
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
@@ -47,7 +46,7 @@ export class PersonSegmentationManager {
           baseOptions: {
             modelAssetPath:
               'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite',
-            delegate: 'CPU',
+            delegate: 'GPU',
           },
           runningMode: 'VIDEO',
           outputCategoryMask: true,
@@ -55,14 +54,15 @@ export class PersonSegmentationManager {
         });
 
         this.isLoaded = true;
-        this.isInitializing = false;
         return true;
-      } catch (e2) {
-        console.warn('ImageSegmenter unavailable; will use luminance keying fallback:', e2);
-        this.isInitializing = false;
+      } catch (err) {
         return false;
       }
-    }
+    };
+
+    const success = await withTimeout(loadTask(), 2500, false);
+    this.isInitializing = false;
+    return success;
   }
 
   public isReady(): boolean {

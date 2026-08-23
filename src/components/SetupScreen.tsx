@@ -30,6 +30,7 @@ interface SetupScreenProps {
   config: FingercontrolConfig;
   onUpdateConfig: (config: FingercontrolConfig) => void;
   onStartPerformance: () => void;
+  onStartDemoPerformance: () => void;
   isLoading: boolean;
   loadingMessage: string;
   errorMessage: string | null;
@@ -49,6 +50,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
   config,
   onUpdateConfig,
   onStartPerformance,
+  onStartDemoPerformance,
   isLoading,
   loadingMessage,
   errorMessage,
@@ -608,36 +610,57 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
       {/* Error Banner if any */}
       {errorMessage && (
         <div className="max-w-7xl mx-auto px-6 mb-4 w-full">
-          <div className="p-3 bg-[#2d0f0f] border border-[#ff3333] text-[#ff8888] text-xs rounded flex items-center justify-between">
-            <span>ERROR: {errorMessage}</span>
-            <span className="text-[11px] text-[#aaaaaa]">Please grant camera permission in browser settings</span>
+          <div className="p-3.5 bg-[#2d0f0f] border border-[#ff3333] text-[#ff8888] text-xs rounded flex flex-col sm:flex-row items-center justify-between gap-3">
+            <span>{errorMessage}</span>
+            <button
+              onClick={onStartDemoPerformance}
+              className="px-3 py-1.5 bg-[#ff3333] hover:bg-[#ff1a1a] text-white font-bold rounded cursor-pointer shrink-0"
+            >
+              LAUNCH VIRTUAL STUDIO NOW &rarr;
+            </button>
           </div>
         </div>
       )}
 
-      {/* Bottom Action Footer */}
-      <footer className="border-t border-[#222222] bg-[#0c0c0c] px-6 py-4 flex items-center justify-between">
-        <div className="text-xs text-[#666666]">
-          Jean Studio Performance Pipeline &bull; OBS / System Video Ready
+      {/* Bottom Action Sticky Footer */}
+      <footer className="sticky bottom-0 z-30 border-t border-[#222222] bg-[#0c0c0c]/95 backdrop-blur-md px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-[0_-5px_20px_rgba(0,0,0,0.8)]">
+        <div className="text-xs text-[#666666] flex items-center gap-2">
+          <span>Jean Studio Performance Pipeline</span>
+          <span>&bull;</span>
+          <span>Camera Vision &amp; Virtual Simulator</span>
         </div>
 
-        <button
-          onClick={onStartPerformance}
-          disabled={isLoading}
-          className="px-6 py-2.5 bg-[#ff3333] hover:bg-[#ff1a1a] active:bg-[#d41818] disabled:opacity-50 text-white text-xs font-bold tracking-widest uppercase flex items-center gap-2 rounded transition-all shadow-[0_0_15px_rgba(255,51,51,0.4)] cursor-pointer"
-        >
-          {isLoading ? (
-            <>
-              <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>{loadingMessage || 'INITIALIZING VISION MODELS...'}</span>
-            </>
-          ) : (
-            <>
-              <span>ENABLE CAMERA &amp; START</span>
-              <ArrowRight className="w-4 h-4" />
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          {/* Quick Demo Simulator launch */}
+          <button
+            onClick={onStartDemoPerformance}
+            disabled={isLoading}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-[#1a1a1a] hover:bg-[#262626] border border-[#333333] hover:border-[#666666] disabled:opacity-50 text-white text-xs font-bold tracking-wider uppercase rounded transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4 text-[#ff3333]" />
+            <span>DEMO SIMULATOR (NO CAMERA)</span>
+          </button>
+
+          {/* Primary Camera Launch */}
+          <button
+            onClick={onStartPerformance}
+            disabled={isLoading}
+            className="flex-1 sm:flex-none px-6 py-2.5 bg-[#ff3333] hover:bg-[#ff1a1a] active:bg-[#d41818] disabled:opacity-50 text-white text-xs font-bold tracking-widest uppercase flex items-center justify-center gap-2 rounded transition-all shadow-[0_0_15px_rgba(255,51,51,0.4)] cursor-pointer"
+          >
+            {isLoading ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>{loadingMessage || 'STARTING...'}</span>
+              </>
+            ) : (
+              <>
+                <Camera className="w-4 h-4" />
+                <span>START WITH CAMERA</span>
+                <ArrowRight className="w-4 h-4" />
+              </>
+            )}
+          </button>
+        </div>
       </footer>
     </div>
   );

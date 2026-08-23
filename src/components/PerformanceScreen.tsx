@@ -12,7 +12,6 @@ import { audioManager } from '../utils/audio';
 import {
   Sliders,
   Camera,
-  Video,
   RotateCcw,
   Maximize,
   Minimize,
@@ -21,23 +20,29 @@ import {
   Eye,
   EyeOff,
   Disc,
-  Play,
   Hand,
-  CheckCircle2,
+  Sparkles,
+  Video,
 } from 'lucide-react';
 
 interface PerformanceScreenProps {
   config: FingercontrolConfig;
   videoStream: MediaStream | null;
+  isVirtualCamera?: boolean;
   onEditSetup: () => void;
   onUpdateConfig: (config: FingercontrolConfig) => void;
+  onSwitchToCamera?: () => void;
+  onSwitchToDemo?: () => void;
 }
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   config,
   videoStream,
+  isVirtualCamera = false,
   onEditSetup,
   onUpdateConfig,
+  onSwitchToCamera,
+  onSwitchToDemo,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -60,8 +65,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const recordedChunksRef = useRef<Blob[]>([]);
   const recTimerRef = useRef<number | null>(null);
 
-  // Interactive Mouse Simulation Mode (for testing without hands/webcam)
-  const [simMode, setSimMode] = useState<boolean>(false);
+  // Mouse / Touch Gesture Trigger state (works seamlessly on desktop & mobile)
+  const [simFinger, setSimFinger] = useState<Finger>('index');
   const simHandRef = useRef<{
     active: boolean;
     hand: HandType;
@@ -157,10 +162,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     }
   }, []);
 
-  // Main Render & Detection Animation Loop
+  // Main Render & Detection Animation Loop (Guaranteed Non-Blocking)
   useEffect(() => {
     let animId: number;
-    let lastFrameTime = performance.now();
     let frameCount = 0;
     let lastFpsUpdate = performance.now();
 
@@ -169,20 +173,59 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       const video = videoRef.current;
       const canvas = canvasRef.current;
 
-      if (video && canvas && video.readyState >= 2) {
-        // Adjust canvas resolution to match video aspect
-        const targetW = video.videoWidth || 1280;
-        const targetH = video.videoHeight || 720;
+      if (canvas) {
+        // Adjust canvas resolution
+        const targetW = (video && video.videoWidth > 0) ? video.videoWidth : 1280;
+        const targetH = (video && video.videoHeight > 0) ? video.videoHeight : 720;
         if (canvas.width !== targetW || canvas.height !== targetH) {
           canvas.width = targetW;
           canvas.height = targetH;
         }
 
         // Process Hand Detection
-        let gestureData = gestureRecognizer.processVideoFrame(video, now, true);
+        let gestureData = video
+          ? gestureRecognizer.processVideoFrame(video, now, true)
+          : {
+              Left: {
+                hand: 'Left' as HandType,
+                detected: false,
+                fingertips: {
+                  thumb: { x: 0, y: 0 },
+                  index: { x: 0, y: 0 },
+                  middle: { x: 0, y: 0 },
+                  ring: { x: 0, y: 0 },
+                  pinky: { x: 0, y: 0 },
+                },
+                state: 'IDLE' as any,
+                activeFinger: null,
+                proximityDistance: 1.0,
+                pinchCenter: null,
+                dragOffset: { dx: 0, dy: 0 },
+                holdDurationMs: 0,
+                effectConfirmedTimestamp: 0,
+              },
+              Right: {
+                hand: 'Right' as HandType,
+                detected: false,
+                fingertips: {
+                  thumb: { x: 0, y: 0 },
+                  index: { x: 0, y: 0 },
+                  middle: { x: 0, y: 0 },
+                  ring: { x: 0, y: 0 },
+                  pinky: { x: 0, y: 0 },
+                },
+                state: 'IDLE' as any,
+                activeFinger: null,
+                proximityDistance: 1.0,
+                pinchCenter: null,
+                dragOffset: { dx: 0, dy: 0 },
+                holdDurationMs: 0,
+                effectConfirmedTimestamp: 0,
+              },
+            };
 
-        // If simulation mode is active, override hand
-        if (simMode && simHandRef.current.active) {
+        // If mouse / touch simulation is active, inject gesture
+        if (simHandRef.current.active) {
           const sim = simHandRef.current;
           gestureData = {
             ...gestureData,
@@ -217,25 +260,27 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         // Render Combined Canvas Frame
-        visualRenderer.renderFrame(
-          video,
-          gestureData,
-          config,
-          activeRightEffectIdRef.current as any,
-          isRightEffectActiveRef.current,
-          now
-        );
+        if (video) {
+          visualRenderer.renderFrame(
+            video,
+            gestureData,
+            config,
+            activeRightEffectIdRef.current as any,
+            isRightEffectActiveRef.current,
+            now
+          );
+        }
 
         // Update UI Telemetry states
         setLeftStateLabel(
           gestureData.Left.detected
             ? `${gestureData.Left.state}${gestureData.Left.activeFinger ? ` [${gestureData.Left.activeFinger.toUpperCase()}]` : ''}`
-            : 'NO HAND'
+            : 'READY / CLICK STAGE'
         );
         setRightStateLabel(
           gestureData.Right.detected
             ? `${gestureData.Right.state}${gestureData.Right.activeFinger ? ` [${gestureData.Right.activeFinger.toUpperCase()}]` : ''}`
-            : 'NO HAND'
+            : 'READY / CLICK STAGE'
         );
       }
 
@@ -254,7 +299,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     return () => {
       cancelAnimationFrame(animId);
     };
-  }, [config, simMode]);
+  }, [config]);
 
   // RESET ACTION (SPEC Section 5.8)
   const handleReset = () => {
@@ -308,7 +353,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     try {
       const stream = canvasRef.current.captureStream(30);
 
-      // Add audio track from AudioManager if available
       const audioStream = audioManager.getMediaStream();
       if (audioStream && audioStream.getAudioTracks().length > 0) {
         audioStream.getAudioTracks().forEach((track) => stream.addTrack(track));
@@ -375,16 +419,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     }
   };
 
-  // Interactive Simulation Canvas Mouse Handlers
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!simMode || !canvasRef.current) return;
+  // Interactive Stage Click & Drag Handlers
+  const handleStagePointerDown = (clientX: number, clientY: number) => {
+    if (!canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
 
     // Left half = left hand, Right half = right hand
     const hand: HandType = x < 0.5 ? 'Left' : 'Right';
-    const finger: Finger = 'index';
+    const finger: Finger = simFinger;
 
     simHandRef.current = {
       active: true,
@@ -396,17 +440,17 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     handleGestureTrigger(hand, finger, { x, y });
   };
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!simMode || !simHandRef.current.active || !canvasRef.current) return;
+  const handleStagePointerMove = (clientX: number, clientY: number) => {
+    if (!simHandRef.current.active || !canvasRef.current) return;
     const rect = canvasRef.current.getBoundingClientRect();
-    const x = (e.clientX - rect.left) / rect.width;
-    const y = (e.clientY - rect.top) / rect.height;
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
 
     simHandRef.current.pos = { x, y };
   };
 
-  const handleCanvasMouseUp = () => {
-    if (!simMode || !simHandRef.current.active) return;
+  const handleStagePointerUp = () => {
+    if (!simHandRef.current.active) return;
     const { hand, finger } = simHandRef.current;
     simHandRef.current.active = false;
     handleGestureRelease(hand, finger);
@@ -415,7 +459,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   return (
     <div
       ref={containerRef}
-      className="relative w-screen h-screen bg-[#080808] overflow-hidden select-none font-mono text-white flex flex-col"
+      className="fixed inset-0 w-full h-full bg-[#080808] overflow-hidden select-none font-mono text-white flex flex-col z-50"
     >
       {/* Hidden Video Source */}
       <video
@@ -445,6 +489,27 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <RotateCcw className="w-3.5 h-3.5 text-[#ff3333]" />
             <span>RESET</span>
           </button>
+
+          {/* Camera / Demo mode switcher */}
+          {isVirtualCamera ? (
+            <button
+              onClick={onSwitchToCamera}
+              className="hidden sm:flex px-3 py-1.5 bg-[#181818] hover:bg-[#222222] border border-[#333333] text-white text-xs font-bold tracking-wider rounded items-center gap-1.5 cursor-pointer"
+              title="Switch to Real Webcam"
+            >
+              <Camera className="w-3.5 h-3.5 text-[#ff3333]" />
+              <span>USE WEBCAM</span>
+            </button>
+          ) : (
+            <button
+              onClick={onSwitchToDemo}
+              className="hidden sm:flex px-3 py-1.5 bg-[#181818] hover:bg-[#222222] border border-[#333333] text-white text-xs font-bold tracking-wider rounded items-center gap-1.5 cursor-pointer"
+              title="Switch to Virtual Demo Studio"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-[#ff3333]" />
+              <span>DEMO STUDIO</span>
+            </button>
+          )}
         </div>
 
         {/* Center Performance Badges */}
@@ -511,7 +576,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           {/* Quick Tracking Toggle */}
           <button
             onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded"
+            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
             title="Toggle Tracking Points"
           >
             {config.trackingVisible ? <Eye className="w-4 h-4 text-[#ff3333]" /> : <EyeOff className="w-4 h-4" />}
@@ -520,7 +585,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           {/* Quick Audio Toggle */}
           <button
             onClick={() => onUpdateConfig({ ...config, soundEnabled: !config.soundEnabled })}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded"
+            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
             title="Toggle Audio Feedback"
           >
             {config.soundEnabled ? <Volume2 className="w-4 h-4 text-[#ff3333]" /> : <VolumeX className="w-4 h-4" />}
@@ -529,7 +594,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           {/* Fullscreen */}
           <button
             onClick={toggleFullscreen}
-            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded"
+            className="p-1.5 bg-[#141414]/90 hover:bg-[#202020] border border-[#333333] text-[#cccccc] hover:text-white rounded cursor-pointer"
             title="Fullscreen Toggle"
           >
             {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
@@ -538,12 +603,25 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       </header>
 
       {/* Primary Composite Visual Canvas Stage */}
-      <main className="flex-1 w-full h-full flex items-center justify-center relative bg-[#080808]">
+      <main
+        className="flex-1 w-full h-full flex items-center justify-center relative bg-[#080808] touch-none"
+        onMouseDown={(e) => handleStagePointerDown(e.clientX, e.clientY)}
+        onMouseMove={(e) => handleStagePointerMove(e.clientX, e.clientY)}
+        onMouseUp={handleStagePointerUp}
+        onTouchStart={(e) => {
+          if (e.touches.length > 0) {
+            handleStagePointerDown(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchMove={(e) => {
+          if (e.touches.length > 0) {
+            handleStagePointerMove(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        }}
+        onTouchEnd={handleStagePointerUp}
+      >
         <canvas
           ref={canvasRef}
-          onMouseDown={handleCanvasMouseDown}
-          onMouseMove={handleCanvasMouseMove}
-          onMouseUp={handleCanvasMouseUp}
           className="w-full h-full object-contain cursor-crosshair"
         />
 
@@ -570,7 +648,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         )}
       </main>
 
-      {/* Bottom Status Bar & Simulation Mode Toggle */}
+      {/* Bottom Status Bar & Simulation Finger Select */}
       <footer className="absolute bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-black/80 to-transparent px-6 py-3 flex items-center justify-between text-[11px] text-[#777777] pointer-events-auto">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-1.5">
@@ -579,25 +657,28 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           </div>
 
           <div className="hidden sm:flex items-center gap-2 text-[#666666]">
-            <span>MIRRORED VIEW</span>
+            <span>{isVirtualCamera ? 'VIRTUAL STUDIO ACTIVE' : 'WEBCAM ACTIVE'}</span>
             <span>&bull;</span>
-            <span>PINCH THUMB + FINGER TO TRIGGER</span>
+            <span>PINCH IN AIR OR CLICK &amp; DRAG ANYWHERE</span>
           </div>
         </div>
 
-        {/* Simulation / Mouse Test Mode Fallback */}
+        {/* Finger Trigger Selector for Instant Clicking */}
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => setSimMode(!simMode)}
-            className={`px-2.5 py-1 rounded border text-[10px] font-mono flex items-center gap-1.5 transition-colors cursor-pointer ${
-              simMode
-                ? 'border-[#ff3333] bg-[#ff3333]/20 text-white font-bold'
-                : 'border-[#333333] bg-[#111111]/80 text-[#888888] hover:text-white'
-            }`}
-          >
-            <Hand className="w-3 h-3 text-[#ff3333]" />
-            <span>MOUSE PINCH SIM: {simMode ? 'ON (CLICK & DRAG)' : 'OFF'}</span>
-          </button>
+          <span className="text-[10px] text-[#888888] hidden md:inline">CLICK TRIGGER FINGER:</span>
+          {(['index', 'middle', 'ring', 'pinky'] as Finger[]).map((f) => (
+            <button
+              key={f}
+              onClick={() => setSimFinger(f)}
+              className={`px-2 py-0.5 rounded text-[10px] uppercase font-mono transition-colors cursor-pointer ${
+                simFinger === f
+                  ? 'bg-[#ff3333] text-white font-bold shadow-[0_0_8px_rgba(255,51,51,0.5)]'
+                  : 'bg-[#141414] text-[#888888] border border-[#2c2c2c] hover:text-white'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
         </div>
       </footer>
     </div>

@@ -1,6 +1,26 @@
 import { FilesetResolver, HandLandmarker, HandLandmarkerResult } from '@mediapipe/tasks-vision';
 import { Finger, HandGestureData, HandType, FingertipPoint, GestureState } from '../types/config';
 
+function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`Vision task timed out after ${ms}ms, using fallback`);
+      resolve(fallbackValue);
+    }, ms);
+
+    promise
+      .then((val) => {
+        clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        console.warn('Vision task error:', err);
+        resolve(fallbackValue);
+      });
+  });
+}
+
 export class GestureRecognizerManager {
   private handLandmarker: HandLandmarker | null = null;
   private isInitializing: boolean = false;
@@ -56,29 +76,8 @@ export class GestureRecognizerManager {
     if (this.isInitializing) return false;
 
     this.isInitializing = true;
-    try {
-      const vision = await FilesetResolver.forVisionTasks(
-        'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
-      );
 
-      this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 2,
-        minHandDetectionConfidence: 0.5,
-        minHandPresenceConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-
-      this.isLoaded = true;
-      this.isInitializing = false;
-      return true;
-    } catch (err) {
-      console.warn('GPU delegate failed or initial load error, attempting CPU fallback:', err);
+    const loadTask = async (): Promise<boolean> => {
       try {
         const vision = await FilesetResolver.forVisionTasks(
           'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
@@ -88,24 +87,50 @@ export class GestureRecognizerManager {
           baseOptions: {
             modelAssetPath:
               'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-            delegate: 'CPU',
+            delegate: 'GPU',
           },
           runningMode: 'VIDEO',
           numHands: 2,
-          minHandDetectionConfidence: 0.4,
-          minHandPresenceConfidence: 0.4,
-          minTrackingConfidence: 0.4,
+          minHandDetectionConfidence: 0.45,
+          minHandPresenceConfidence: 0.45,
+          minTrackingConfidence: 0.45,
         });
 
         this.isLoaded = true;
-        this.isInitializing = false;
         return true;
-      } catch (fallbackErr) {
-        console.error('HandLandmarker initialization failed completely:', fallbackErr);
-        this.isInitializing = false;
-        return false;
+      } catch (gpuErr) {
+        console.warn('MediaPipe GPU load failed, trying CPU delegate:', gpuErr);
+        try {
+          const vision = await FilesetResolver.forVisionTasks(
+            'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm'
+          );
+
+          this.handLandmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              delegate: 'CPU',
+            },
+            runningMode: 'VIDEO',
+            numHands: 2,
+            minHandDetectionConfidence: 0.35,
+            minHandPresenceConfidence: 0.35,
+            minTrackingConfidence: 0.35,
+          });
+
+          this.isLoaded = true;
+          return true;
+        } catch (cpuErr) {
+          console.warn('MediaPipe CPU load failed:', cpuErr);
+          return false;
+        }
       }
-    }
+    };
+
+    // Max 3.5s timeout so it NEVER hangs
+    const success = await withTimeout(loadTask(), 3500, false);
+    this.isInitializing = false;
+    return success;
   }
 
   public isReady(): boolean {

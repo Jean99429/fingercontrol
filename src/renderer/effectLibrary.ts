@@ -132,6 +132,31 @@ export class EffectEngine {
     this.glyphGridInitialized = true;
   }
 
+  private drawStudioFallback(ctx: CanvasRenderingContext2D, width: number, height: number, now: number) {
+    const t = now * 0.0015;
+    const grad = ctx.createRadialGradient(width / 2, height / 2, 50, width / 2, height / 2, width / 1.2);
+    grad.addColorStop(0, '#1c1c1f');
+    grad.addColorStop(1, '#08080a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+
+    // Subtle dark studio geometry & performer silhouette
+    ctx.fillStyle = '#232328';
+    const cx = width / 2 + Math.sin(t * 0.7) * 20;
+    const cy = height / 2 + Math.cos(t * 0.5) * 10;
+
+    // Torso
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 180, 160, 220, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head
+    ctx.fillStyle = '#3a3a42';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - 20, 85, 110, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   public updateAndRender(
     ctx: CanvasRenderingContext2D,
     width: number,
@@ -166,8 +191,12 @@ export class EffectEngine {
 
     // Draw base mirrored video to working context
     this.workCtx.save();
-    this.workCtx.scale(-1, 1);
-    this.workCtx.drawImage(video, -width, 0, width, height);
+    if (video && video.readyState >= 2 && video.videoWidth > 0) {
+      this.workCtx.scale(-1, 1);
+      this.workCtx.drawImage(video, -width, 0, width, height);
+    } else {
+      this.drawStudioFallback(this.workCtx, width, height, now);
+    }
     this.workCtx.restore();
 
     // Maintain temporal frame buffer for RGB Time Echo

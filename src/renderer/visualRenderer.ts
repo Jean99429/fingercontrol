@@ -105,7 +105,7 @@ export class VisualRenderer {
     isRightEffectActive: boolean,
     now: number
   ): void {
-    if (!this.canvas || !this.ctx || video.readyState < 2) return;
+    if (!this.canvas || !this.ctx) return;
 
     const width = this.canvas.width;
     const height = this.canvas.height;
