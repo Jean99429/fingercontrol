@@ -33,8 +33,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, fallbackValue: T): Prom
 export interface HandTrackerState {
   state: GestureState;
   activeFinger: Finger | null;
-  armStartTime: number;
-  lastTriggerTime: number;
+  isPinching: boolean;
   pinchStartPos: FingertipPoint | null;
   currentPinchPos: FingertipPoint | null;
   triggerTimestamp: number;
@@ -51,8 +50,7 @@ export class GestureRecognizerManager {
     left: {
       state: 'IDLE',
       activeFinger: null,
-      armStartTime: 0,
-      lastTriggerTime: 0,
+      isPinching: false,
       pinchStartPos: null,
       currentPinchPos: null,
       triggerTimestamp: 0,
@@ -61,8 +59,7 @@ export class GestureRecognizerManager {
     right: {
       state: 'IDLE',
       activeFinger: null,
-      armStartTime: 0,
-      lastTriggerTime: 0,
+      isPinching: false,
       pinchStartPos: null,
       currentPinchPos: null,
       triggerTimestamp: 0,
@@ -70,16 +67,23 @@ export class GestureRecognizerManager {
     },
   };
 
+  // Two-hand heart gesture tracking
+  private heartGestureStartTime: number = 0;
+  private heartGestureActive: boolean = false;
+
   // Callbacks
   private onTriggerCallback?: (hand: Hand, finger: Finger, pinchPos: FingertipPoint, timestamp: number) => void;
   private onReleaseCallback?: (hand: Hand, finger: Finger, timestamp: number) => void;
+  private onHeartGestureCallback?: (timestamp: number) => void;
 
   public setCallbacks(
     onTrigger: (hand: Hand, finger: Finger, pinchPos: FingertipPoint, timestamp: number) => void,
-    onRelease: (hand: Hand, finger: Finger, timestamp: number) => void
+    onRelease: (hand: Hand, finger: Finger, timestamp: number) => void,
+    onHeartGesture?: (timestamp: number) => void
   ) {
     this.onTriggerCallback = onTrigger;
     this.onReleaseCallback = onRelease;
+    this.onHeartGestureCallback = onHeartGesture;
   }
 
   public async initialize(): Promise<boolean> {
@@ -148,6 +152,8 @@ export class GestureRecognizerManager {
   }
 
   public reset(): void {
+    this.heartGestureStartTime = 0;
+    this.heartGestureActive = false;
     for (const hand of ['left', 'right'] as Hand[]) {
       const s = this.states[hand];
       if (s.state === 'ACTIVE' && s.activeFinger && this.onReleaseCallback) {
@@ -156,8 +162,7 @@ export class GestureRecognizerManager {
       this.states[hand] = {
         state: 'IDLE',
         activeFinger: null,
-        armStartTime: 0,
-        lastTriggerTime: 0,
+        isPinching: false,
         pinchStartPos: null,
         currentPinchPos: null,
         triggerTimestamp: 0,
@@ -275,78 +280,50 @@ export class GestureRecognizerManager {
           fingerDists.sort((a, b) => a.dist - b.dist);
           const nearest = fingerDists[0];
 
-          // Hysteresis & thresholds normalized to hand scale
-          const approachThreshold = 0.70;
-          const pinchOnThreshold = 0.38;
-          const pinchOffThreshold = 0.52;
-          const ARM_DURATION_MS = 180; // Hold required before activation (SPEC: 180–250ms)
+          // Thresholds for clean instant pinch trigger
+          const pinchOnThreshold = 0.50;
+          const pinchOffThreshold = 0.68;
           const now = timestampMs;
 
           const handState = this.states[handType];
-          let currentState = handState.state;
-          let activeFinger = handState.activeFinger;
+          const prevPinch = handState.isPinching;
+          const currentPinch = nearest.dist < (prevPinch ? pinchOffThreshold : pinchOnThreshold);
 
           const midPoint: FingertipPoint = {
             x: (thumbTip.x + nearest.tip.x) / 2,
             y: (thumbTip.y + nearest.tip.y) / 2,
           };
 
-          // State Machine
-          if (now < handState.cooldownUntil && currentState === 'IDLE') {
-            // In cooldown period
-          } else if (currentState === 'IDLE') {
-            if (nearest.dist < pinchOnThreshold) {
-              currentState = 'ARMING';
-              activeFinger = nearest.finger;
-              handState.armStartTime = now;
-              handState.pinchStartPos = midPoint;
-            } else if (nearest.dist < approachThreshold) {
-              currentState = 'APPROACHING';
-              activeFinger = nearest.finger;
-            } else {
-              activeFinger = null;
+          let currentState: GestureState = handState.state;
+          let activeFinger: Finger | null = handState.activeFinger;
+
+          // DIRECT PINCH TRIGGER: false -> true transition
+          if (!prevPinch && currentPinch) {
+            handState.isPinching = true;
+            currentState = 'ACTIVE';
+            activeFinger = nearest.finger;
+            handState.pinchStartPos = midPoint;
+            handState.triggerTimestamp = now;
+
+            // Trigger immediately without delay or beep
+            if (this.onTriggerCallback) {
+              this.onTriggerCallback(handType, nearest.finger, midPoint, now);
             }
-          } else if (currentState === 'APPROACHING') {
-            if (nearest.dist < pinchOnThreshold) {
-              currentState = 'ARMING';
-              activeFinger = nearest.finger;
-              handState.armStartTime = now;
-              handState.pinchStartPos = midPoint;
-            } else if (nearest.dist >= approachThreshold) {
-              currentState = 'IDLE';
-              activeFinger = null;
-            } else {
-              activeFinger = nearest.finger;
+          } else if (prevPinch && !currentPinch) {
+            // true -> false transition
+            handState.isPinching = false;
+            currentState = 'IDLE';
+            if (this.onReleaseCallback && activeFinger) {
+              this.onReleaseCallback(handType, activeFinger, now);
             }
-          } else if (currentState === 'ARMING') {
-            if (nearest.dist > pinchOffThreshold) {
-              // Released before arm threshold
-              currentState = 'IDLE';
-              activeFinger = null;
-            } else {
-              // Check arm hold timer
-              const holdTime = now - handState.armStartTime;
-              if (holdTime >= ARM_DURATION_MS) {
-                currentState = 'ACTIVE';
-                handState.lastTriggerTime = now;
-                handState.triggerTimestamp = now;
-                if (this.onTriggerCallback && activeFinger) {
-                  this.onTriggerCallback(handType, activeFinger, midPoint, now);
-                }
-              }
-            }
-          } else if (currentState === 'ACTIVE') {
-            if (nearest.dist > pinchOffThreshold || nearest.finger !== activeFinger) {
-              // Released!
-              currentState = 'RELEASING';
-              if (this.onReleaseCallback && activeFinger) {
-                this.onReleaseCallback(handType, activeFinger, now);
-              }
-              handState.cooldownUntil = now + 250; // brief cooldown before next trigger
-              currentState = 'IDLE';
-              activeFinger = null;
-              handState.pinchStartPos = null;
-            }
+            activeFinger = null;
+            handState.pinchStartPos = null;
+          } else if (currentPinch) {
+            currentState = 'ACTIVE';
+            activeFinger = handState.activeFinger || nearest.finger;
+          } else {
+            currentState = nearest.dist < 0.75 ? 'APPROACHING' : 'IDLE';
+            activeFinger = null;
           }
 
           handState.state = currentState;
@@ -376,12 +353,48 @@ export class GestureRecognizerManager {
             proximityDistance: nearest.dist,
             pinchCenter: midPoint,
             dragOffset: { dx, dy },
-            holdDurationMs: currentState === 'ARMING' ? now - handState.armStartTime : 0,
+            holdDurationMs: 0,
             triggerTimestamp: handState.triggerTimestamp,
             rawLandmarks: landmarks,
             boundingBox: { minX, minY, maxX, maxY },
           };
         }
+
+        // Two-Hand Heart Gesture Detection (>350ms hold)
+        if (result.left.detected && result.right.detected) {
+          const leftThumb = result.left.fingertips.thumb;
+          const rightThumb = result.right.fingertips.thumb;
+          const leftIndex = result.left.fingertips.index;
+          const rightIndex = result.right.fingertips.index;
+
+          const thumbDist = Math.hypot(leftThumb.x - rightThumb.x, leftThumb.y - rightThumb.y);
+          const indexDist = Math.hypot(leftIndex.x - rightIndex.x, leftIndex.y - rightIndex.y);
+
+          // Heart shape: thumbs close together and index fingers close together
+          const isHeartShaped = thumbDist < 0.16 && indexDist < 0.16;
+
+          if (isHeartShaped) {
+            if (this.heartGestureStartTime === 0) {
+              this.heartGestureStartTime = timestampMs;
+            } else if (timestampMs - this.heartGestureStartTime >= 350) {
+              if (!this.heartGestureActive) {
+                this.heartGestureActive = true;
+                if (this.onHeartGestureCallback) {
+                  this.onHeartGestureCallback(timestampMs);
+                }
+              }
+            }
+          } else {
+            this.heartGestureStartTime = 0;
+            this.heartGestureActive = false;
+          }
+        } else {
+          this.heartGestureStartTime = 0;
+          this.heartGestureActive = false;
+        }
+      } else {
+        this.heartGestureStartTime = 0;
+        this.heartGestureActive = false;
       }
     } catch (e) {
       console.warn('Hand tracking frame processing error:', e);

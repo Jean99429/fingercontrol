@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
-import { FingercontrolConfig, ContentSlot, Finger, Hand } from '../types/config';
-import { audioManager } from '../utils/audio';
-import { Play, Square, X, Upload, Video, Camera, AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
+import React, { useRef } from 'react';
+import { FingercontrolConfig, Finger, Hand } from '../types/config';
+import { Upload, Video, Camera, AlertCircle, CheckCircle2, RefreshCw, Volume2 } from 'lucide-react';
+import { speechEngine } from '../utils/speechEngine';
 
 interface SetupScreenProps {
   config: FingercontrolConfig;
@@ -51,72 +51,23 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
   analysisStatus,
   errorMessage,
 }) => {
-  const [playingSlotId, setPlayingSlotId] = useState<string | null>(null);
   const displayFileInputRef = useRef<HTMLInputElement | null>(null);
   const trackingFileInputRef = useRef<HTMLInputElement | null>(null);
-  const audioInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   // Slot helper
-  const getSlot = (hand: Hand, finger: Finger): ContentSlot => {
+  const getSlotText = (hand: Hand, finger: Finger): string => {
     const found = config.slots.find((s) => s.hand === hand && s.finger === finger);
-    if (found) return found;
-    return {
-      id: `${hand}-${finger}`,
-      hand,
-      finger,
-      enabled: true,
-      text: finger.toUpperCase(),
-    };
+    return found ? found.text : finger.toUpperCase();
   };
 
-  const updateSlot = (hand: Hand, finger: Finger, updates: Partial<ContentSlot>) => {
+  const updateSlotText = (hand: Hand, finger: Finger, text: string) => {
     const newSlots = config.slots.map((slot) => {
       if (slot.hand === hand && slot.finger === finger) {
-        return { ...slot, ...updates };
+        return { ...slot, text };
       }
       return slot;
     });
     onUpdateConfig({ ...config, slots: newSlots });
-  };
-
-  // Audio file handler
-  const handleAudioUpload = async (hand: Hand, finger: Finger, file: File) => {
-    try {
-      const buffer = await audioManager.decodeAudioFile(file);
-      updateSlot(hand, finger, {
-        audioFile: file,
-        audioFileName: file.name,
-        audioBuffer: buffer,
-      });
-    } catch (e) {
-      console.warn('Failed to decode audio file:', e);
-      alert('Could not decode this audio file. Please use standard WAV, MP3, M4A, or AAC.');
-    }
-  };
-
-  const handleRemoveAudio = (hand: Hand, finger: Finger) => {
-    const slotId = `${hand}-${finger}`;
-    if (playingSlotId === slotId) {
-      audioManager.stopPreview();
-      setPlayingSlotId(null);
-    }
-    updateSlot(hand, finger, {
-      audioFile: undefined,
-      audioFileName: undefined,
-      audioBuffer: undefined,
-    });
-  };
-
-  const handleTogglePreview = (slot: ContentSlot) => {
-    if (playingSlotId === slot.id) {
-      audioManager.stopPreview();
-      setPlayingSlotId(null);
-    } else if (slot.audioBuffer) {
-      setPlayingSlotId(slot.id);
-      audioManager.playBuffer(slot.audioBuffer, () => {
-        setPlayingSlotId(null);
-      });
-    }
   };
 
   // Validation between display and tracking video
@@ -259,7 +210,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                       </div>
                       <button
                         onClick={() => displayFileInputRef.current?.click()}
-                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0"
+                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0 cursor-pointer"
                       >
                         REPLACE
                       </button>
@@ -267,7 +218,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                   ) : (
                     <button
                       onClick={() => displayFileInputRef.current?.click()}
-                      className="w-full py-2.5 border border-dashed border-[#2A4365] hover:border-[#FF0000] text-[#A0AEC0] hover:text-white rounded text-center transition-colors flex items-center justify-center gap-2"
+                      className="w-full py-2.5 border border-dashed border-[#2A4365] hover:border-[#FF0000] text-[#A0AEC0] hover:text-white rounded text-center transition-colors flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5" />
                       SELECT DISPLAY VIDEO
@@ -295,9 +246,9 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                       {trackingVideoFile && (
                         <button
                           onClick={() => onSelectTrackingVideo(null)}
-                          className="text-[10px] text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1"
+                          className="text-[10px] text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1 cursor-pointer"
                         >
-                          <X className="w-3 h-3" /> REMOVE
+                          X REMOVE
                         </button>
                       )}
                     </div>
@@ -318,7 +269,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                       </div>
                       <button
                         onClick={() => trackingFileInputRef.current?.click()}
-                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0"
+                        className="text-[10px] text-[#8A9BA8] hover:text-white underline uppercase shrink-0 cursor-pointer"
                       >
                         REPLACE
                       </button>
@@ -326,7 +277,7 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                   ) : (
                     <button
                       onClick={() => trackingFileInputRef.current?.click()}
-                      className="w-full py-2.5 border border-dashed border-[#1E2E42] hover:border-[#2A4365] text-[#718096] hover:text-[#CBD5E1] rounded text-center transition-colors flex items-center justify-center gap-2"
+                      className="w-full py-2.5 border border-dashed border-[#1E2E42] hover:border-[#2A4365] text-[#718096] hover:text-[#CBD5E1] rounded text-center transition-colors flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <Upload className="w-3.5 h-3.5" />
                       SELECT TRACKING VIDEO
@@ -402,15 +353,14 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {FINGERS.map((finger) => {
-                const slot = getSlot('left', finger);
+              {FINGERS.map((finger, idx) => {
+                const text = getSlotText('left', finger);
                 const slotKey = `left-${finger}`;
-                const isPlaying = playingSlotId === slot.id;
 
                 return (
                   <div
                     key={slotKey}
-                    className="flex items-center gap-2 bg-[#07111F] border border-[#1E2E42] p-2 rounded"
+                    className="flex items-center gap-3 bg-[#07111F] border border-[#1E2E42] px-3 py-2 rounded"
                   >
                     {/* Finger Label */}
                     <span className="w-16 text-[11px] font-semibold text-[#8A9BA8] uppercase shrink-0">
@@ -420,66 +370,24 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                     {/* Direct Text Input */}
                     <input
                       type="text"
-                      value={slot.text}
-                      onChange={(e) => updateSlot('left', finger, { text: e.target.value })}
+                      value={text}
+                      onChange={(e) => updateSlotText('left', finger, e.target.value)}
                       placeholder={finger.toUpperCase()}
-                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-2.5 py-1 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
+                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-3 py-1.5 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
                     />
 
-                    {/* Audio Controls */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      {slot.audioFile ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleTogglePreview(slot)}
-                            className={`p-1.5 rounded transition-colors ${
-                              isPlaying
-                                ? 'bg-[#FF0000] text-white'
-                                : 'bg-[#1D3557] hover:bg-[#2A4365] text-white'
-                            }`}
-                            title={isPlaying ? 'Stop Preview' : 'Play Preview'}
-                          >
-                            {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                          </button>
-                          <span
-                            className="max-w-[70px] text-[10px] text-[#8A9BA8] truncate"
-                            title={slot.audioFileName}
-                          >
-                            {slot.audioFileName}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveAudio('left', finger)}
-                            className="p-1 text-[#8A9BA8] hover:text-[#FF0000] transition-colors"
-                            title="Remove Audio"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => audioInputRefs.current[slotKey]?.click()}
-                            className="px-2 py-1 bg-[#152336] hover:bg-[#1D3557] border border-[#1E2E42] text-[10px] text-[#A0AEC0] hover:text-white rounded uppercase transition-colors"
-                          >
-                            + AUDIO
-                          </button>
-                          <span className="text-[9px] text-[#4A5D73] px-1 uppercase">NO AUDIO</span>
-                        </>
-                      )}
-                      <input
-                        ref={(el) => { audioInputRefs.current[slotKey] = el; }}
-                        type="file"
-                        accept="audio/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleAudioUpload('left', finger, file);
-                        }}
-                      />
-                    </div>
+                    {/* Test Audio Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        speechEngine.unlockSpeech();
+                        speechEngine.triggerWord(slotKey, text || finger.toUpperCase(), idx);
+                      }}
+                      className="p-1.5 rounded hover:bg-[#1E2E42] text-[#8A9BA8] hover:text-[#FF0000] transition-colors cursor-pointer"
+                      title={`Test sound for ${finger}`}
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </button>
                   </div>
                 );
               })}
@@ -497,15 +405,14 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {FINGERS.map((finger) => {
-                const slot = getSlot('right', finger);
+              {FINGERS.map((finger, idx) => {
+                const text = getSlotText('right', finger);
                 const slotKey = `right-${finger}`;
-                const isPlaying = playingSlotId === slot.id;
 
                 return (
                   <div
                     key={slotKey}
-                    className="flex items-center gap-2 bg-[#07111F] border border-[#1E2E42] p-2 rounded"
+                    className="flex items-center gap-3 bg-[#07111F] border border-[#1E2E42] px-3 py-2 rounded"
                   >
                     {/* Finger Label */}
                     <span className="w-16 text-[11px] font-semibold text-[#8A9BA8] uppercase shrink-0">
@@ -515,66 +422,24 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                     {/* Direct Text Input */}
                     <input
                       type="text"
-                      value={slot.text}
-                      onChange={(e) => updateSlot('right', finger, { text: e.target.value })}
+                      value={text}
+                      onChange={(e) => updateSlotText('right', finger, e.target.value)}
                       placeholder={finger.toUpperCase()}
-                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-2.5 py-1 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
+                      className="flex-1 bg-[#0C1929] border border-[#1E2E42] rounded px-3 py-1.5 text-xs text-white uppercase focus:outline-none focus:border-[#FF0000] transition-colors min-w-0"
                     />
 
-                    {/* Audio Controls */}
-                    <div className="flex items-center gap-1 shrink-0">
-                      {slot.audioFile ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => handleTogglePreview(slot)}
-                            className={`p-1.5 rounded transition-colors ${
-                              isPlaying
-                                ? 'bg-[#FF0000] text-white'
-                                : 'bg-[#1D3557] hover:bg-[#2A4365] text-white'
-                            }`}
-                            title={isPlaying ? 'Stop Preview' : 'Play Preview'}
-                          >
-                            {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                          </button>
-                          <span
-                            className="max-w-[70px] text-[10px] text-[#8A9BA8] truncate"
-                            title={slot.audioFileName}
-                          >
-                            {slot.audioFileName}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveAudio('right', finger)}
-                            className="p-1 text-[#8A9BA8] hover:text-[#FF0000] transition-colors"
-                            title="Remove Audio"
-                          >
-                            <X className="w-3 h-3" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => audioInputRefs.current[slotKey]?.click()}
-                            className="px-2 py-1 bg-[#152336] hover:bg-[#1D3557] border border-[#1E2E42] text-[10px] text-[#A0AEC0] hover:text-white rounded uppercase transition-colors"
-                          >
-                            + AUDIO
-                          </button>
-                          <span className="text-[9px] text-[#4A5D73] px-1 uppercase">NO AUDIO</span>
-                        </>
-                      )}
-                      <input
-                        ref={(el) => { audioInputRefs.current[slotKey] = el; }}
-                        type="file"
-                        accept="audio/*"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleAudioUpload('right', finger, file);
-                        }}
-                      />
-                    </div>
+                    {/* Test Audio Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        speechEngine.unlockSpeech();
+                        speechEngine.triggerWord(slotKey, text || finger.toUpperCase(), 4 + idx);
+                      }}
+                      className="p-1.5 rounded hover:bg-[#1E2E42] text-[#8A9BA8] hover:text-[#FF0000] transition-colors cursor-pointer"
+                      title={`Test sound for ${finger}`}
+                    >
+                      <Volume2 className="w-4 h-4" />
+                    </button>
                   </div>
                 );
               })}

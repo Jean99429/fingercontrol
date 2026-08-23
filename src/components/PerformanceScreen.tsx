@@ -8,22 +8,22 @@ import {
   HandGestureData,
 } from '../types/config';
 import { gestureRecognizer } from '../vision/gestureRecognizer';
-import { visualRenderer, VisualRenderer } from '../renderer/visualRenderer';
-import { audioManager } from '../utils/audio';
+import { visualRenderer } from '../renderer/visualRenderer';
+import { speechEngine } from '../utils/speechEngine';
 import {
   ArrowLeft,
   Play,
   Pause,
-  Download,
   RotateCcw,
-  Video as VideoIcon,
   Circle,
   Eye,
   EyeOff,
   FlipHorizontal,
   Trash2,
-  CheckCircle2,
   Clock,
+  Heart,
+  Info,
+  Volume2,
 } from 'lucide-react';
 
 interface PerformanceScreenProps {
@@ -40,6 +40,8 @@ interface PerformanceScreenProps {
   analysisFrames: VideoAnalysisFrame[];
   onReanalyze: () => void;
 }
+
+const FINGER_LIST = ['index', 'middle', 'ring', 'pinky'];
 
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   inputMode,
@@ -61,30 +63,40 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [duration, setDuration] = useState<number>(0);
 
-  // Recording state (for camera mode)
-  const [isRecordingCamera, setIsRecordingCamera] = useState<boolean>(false);
+  // Recording state
+  const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordingSeconds, setRecordingSeconds] = useState<number>(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
-
-  // Export state (for upload video mode)
-  const [isExporting, setIsExporting] = useState<boolean>(false);
-  const [exportProgress, setExportProgress] = useState<number>(0);
-  const [exportStatus, setExportStatus] = useState<string>('');
+  const screenStreamRef = useRef<MediaStream | null>(null);
 
   // Selected event in timeline (for inspection or deletion)
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
-  // Audio triggering tracker to avoid duplicate triggers during playback
+  // Speech triggering tracker to avoid duplicate triggers during playback
   const triggeredEventIdsRef = useRef<Set<string>>(new Set());
 
-  // Slot lookup
+  // Heart gesture visual feedback banner
+  const [heartDetected, setHeartDetected] = useState<boolean>(false);
+  const heartBannerTimerRef = useRef<number | null>(null);
+
+  // Slot lookup helper
   const getSlot = useCallback(
     (hand: Hand, finger: string): ContentSlot | undefined => {
       return config.slots.find((s) => s.hand === hand && s.finger === finger);
     },
     [config.slots]
   );
+
+  const getSlotIndex = useCallback((hand: Hand, finger: string): number => {
+    const fIndex = FINGER_LIST.indexOf(finger);
+    return hand === 'left' ? fIndex : 4 + fIndex;
+  }, []);
+
+  // Update speech engine voice assignments
+  useEffect(() => {
+    speechEngine.updateVoiceAssignments(config.slots);
+  }, [config.slots]);
 
   // ==========================================
   // CAMERA MODE LOOP
@@ -106,17 +118,31 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         const slot = getSlot(hand, finger);
         const text = slot?.text || finger.toUpperCase();
         const slotId = `${hand}-${finger}`;
+        const slotIdx = getSlotIndex(hand, finger);
 
         visualRenderer.spawnFloatingText(slotId, hand, text, pinchPos.x, pinchPos.y);
 
-        // Play real audio file if present
-        if (slot?.audioBuffer) {
-          audioManager.triggerAudio(slot.audioBuffer);
-        }
+        // DIRECT PINCH TRIGGER: cancel previous speech & speak selected word immediately
+        speechEngine.triggerWord(slotId, text, slotIdx);
       },
       (hand, finger) => {
         const slotId = `${hand}-${finger}`;
         visualRenderer.releaseFloatingText(slotId);
+      },
+      () => {
+        // TWO-HAND HEART GESTURE DETECTED (>350ms hold)
+        setHeartDetected(true);
+        if (heartBannerTimerRef.current !== null) {
+          clearTimeout(heartBannerTimerRef.current);
+        }
+        heartBannerTimerRef.current = window.setTimeout(() => {
+          setHeartDetected(false);
+          heartBannerTimerRef.current = null;
+        }, 3000);
+
+        speechEngine.triggerHeartPhrase(config.slots, () => {
+          setHeartDetected(false);
+        });
       }
     );
 
@@ -142,7 +168,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         // Draw composite frame
-        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time);
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo);
       }
 
       animationFrameId = requestAnimationFrame(renderLoop);
@@ -152,9 +178,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
     return () => {
       cancelAnimationFrame(animationFrameId);
-      audioManager.stopAll();
+      speechEngine.stop();
     };
-  }, [inputMode, config.mirroredVideo, config.trackingVisible, getSlot]);
+  }, [inputMode, config.mirroredVideo, config.trackingVisible, config.slots, getSlot, getSlotIndex]);
 
   // Set camera stream source
   useEffect(() => {
@@ -164,72 +190,106 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     }
   }, [inputMode, cameraStream]);
 
-  // Camera recording timer
+  // Recording timer
   useEffect(() => {
     let timer: number;
-    if (isRecordingCamera) {
+    if (isRecording) {
       setRecordingSeconds(0);
       timer = window.setInterval(() => {
         setRecordingSeconds((s) => s + 1);
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [isRecordingCamera]);
+  }, [isRecording]);
 
-  // Start Camera Recording
-  const handleStartCameraRecording = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const canvasStream = canvas.captureStream(30);
-    const audioStream = audioManager.getMediaStream();
-
-    const combinedTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
-    if (audioStream) {
-      combinedTracks.push(...audioStream.getAudioTracks());
-    }
-
-    const combinedStream = new MediaStream(combinedTracks);
-
-    // Format selection
-    let mimeType = 'video/webm;codecs=vp9,opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp8,opus';
-    }
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm';
-    }
-
-    recordedChunksRef.current = [];
-    const recorder = new MediaRecorder(combinedStream, { mimeType });
-
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        recordedChunksRef.current.push(e.data);
+  // Start Tab & Audio Recording via getDisplayMedia
+  const handleStartRecording = async () => {
+    try {
+      // Prompt displayMedia with audio capture to record browser SpeechSynthesis
+      let stream: MediaStream;
+      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true,
+            // @ts-ignore - Chrome standard surface hints
+            preferCurrentTab: true,
+            selfBrowserSurface: 'include',
+            systemAudio: 'include',
+          });
+        } catch (displayErr) {
+          console.warn('getDisplayMedia prompt closed or rejected, falling back to canvas capture:', displayErr);
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          stream = canvas.captureStream(30);
+        }
+      } else {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        stream = canvas.captureStream(30);
       }
-    };
 
-    recorder.onstop = () => {
-      const blob = new Blob(recordedChunksRef.current, { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `fingercontrol-camera-${Date.now()}.webm`;
-      a.click();
-      URL.revokeObjectURL(url);
-    };
+      screenStreamRef.current = stream;
 
-    recorder.start(250);
-    mediaRecorderRef.current = recorder;
-    setIsRecordingCamera(true);
+      // Handle user stopping screen share from browser banner
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          handleStopRecording();
+        };
+      }
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8,opus';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(stream, { mimeType });
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `fingercontrol-performance-${Date.now()}.webm`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+        // Stop all tracks
+        if (screenStreamRef.current) {
+          screenStreamRef.current.getTracks().forEach((t) => t.stop());
+          screenStreamRef.current = null;
+        }
+      };
+
+      recorder.start(250);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (err) {
+      console.error('Failed to start recording:', err);
+    }
   };
 
-  // Stop Camera Recording
-  const handleStopCameraRecording = () => {
+  // Stop Recording
+  const handleStopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }
-    setIsRecordingCamera(false);
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getTracks().forEach((t) => t.stop());
+      screenStreamRef.current = null;
+    }
+    setIsRecording(false);
   };
 
   // ==========================================
@@ -260,7 +320,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         // Find closest analysis frame
         let closestFrame: VideoAnalysisFrame | null = null;
         if (analysisFrames.length > 0) {
-          // Binary search or nearest lookup
           let minDiff = Infinity;
           for (const f of analysisFrames) {
             const diff = Math.abs(f.timestamp - vTime);
@@ -305,13 +364,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             // Spawn / update floating text
             visualRenderer.spawnFloatingText(slotId, ev.hand, ev.text, ev.x, ev.y);
 
-            // Trigger audio once per event
+            // Trigger speech once per event
             if (!triggeredEventIdsRef.current.has(ev.id)) {
               triggeredEventIdsRef.current.add(ev.id);
-              const slot = getSlot(ev.hand, ev.finger);
-              if (slot?.audioBuffer) {
-                audioManager.triggerAudio(slot.audioBuffer);
-              }
+              const slotIdx = getSlotIndex(ev.hand, ev.finger);
+              speechEngine.triggerWord(slotId, ev.text, slotIdx);
             }
           } else {
             // Release if previously active
@@ -322,7 +379,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         // Draw composite frame
-        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time);
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo);
       }
 
       animationFrameId = requestAnimationFrame(previewLoop);
@@ -332,9 +389,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
     return () => {
       cancelAnimationFrame(animationFrameId);
-      audioManager.stopAll();
+      speechEngine.stop();
     };
-  }, [inputMode, analysisFrames, gestureEvents, config.trackingVisible, getSlot]);
+  }, [inputMode, analysisFrames, gestureEvents, config.trackingVisible, config.mirroredVideo, getSlotIndex]);
 
   // Video metadata load
   const handleVideoLoadedMetadata = () => {
@@ -382,171 +439,6 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     }
   };
 
-  // ==========================================
-  // EXPORT VIDEO IMPLEMENTATION
-  // ==========================================
-  const handleExportUploadedVideo = async () => {
-    const video = hiddenVideoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas || isExporting) return;
-
-    setIsExporting(true);
-    setExportProgress(0);
-    setExportStatus('PREPARING EXPORT RENDERER...');
-
-    // Pause current preview playback
-    video.pause();
-    setIsPlaying(false);
-    audioManager.stopAll();
-
-    const originalTime = video.currentTime;
-    const totalDuration = video.duration || duration;
-    const exportFps = 30;
-    const interval = 1 / exportFps;
-    const totalFrames = Math.ceil(totalDuration * exportFps);
-
-    // Setup export canvas
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = video.videoWidth || 1280;
-    exportCanvas.height = video.videoHeight || 720;
-    const dedicatedRenderer = new VisualRenderer();
-    dedicatedRenderer.init(exportCanvas);
-
-    // Setup audio destination
-    const ctx = audioManager.getAudioContext();
-    const destNode = ctx.createMediaStreamDestination();
-
-    // Setup MediaRecorder
-    const canvasStream = exportCanvas.captureStream(exportFps);
-    const exportStream = new MediaStream([
-      ...canvasStream.getVideoTracks(),
-      ...destNode.stream.getAudioTracks(),
-    ]);
-
-    let mimeType = 'video/webm;codecs=vp9,opus';
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm;codecs=vp8,opus';
-    }
-    if (!MediaRecorder.isTypeSupported(mimeType)) {
-      mimeType = 'video/webm';
-    }
-
-    const recordedBlobs: Blob[] = [];
-    const recorder = new MediaRecorder(exportStream, { mimeType });
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        recordedBlobs.push(e.data);
-      }
-    };
-
-    recorder.start();
-
-    // Map gesture events for audio scheduling
-    const triggeredAudioEvents = new Set<string>();
-
-    // Step frame by frame
-    for (let i = 0; i < totalFrames; i++) {
-      const targetTime = Math.min(i * interval, totalDuration);
-      video.currentTime = targetTime;
-
-      await new Promise<void>((resolve) => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked);
-          resolve();
-        };
-        video.addEventListener('seeked', onSeeked, { once: true });
-      });
-
-      // Find analysis frame
-      let closestFrame: VideoAnalysisFrame | null = null;
-      let minDiff = Infinity;
-      for (const f of analysisFrames) {
-        const diff = Math.abs(f.timestamp - targetTime);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closestFrame = f;
-        }
-        if (diff > minDiff && minDiff < 0.1) break;
-      }
-
-      const defaultHand = (hand: Hand): HandGestureData => ({
-        hand,
-        detected: false,
-        fingertips: {
-          thumb: { x: 0, y: 0 },
-          index: { x: 0, y: 0 },
-          middle: { x: 0, y: 0 },
-          ring: { x: 0, y: 0 },
-          pinky: { x: 0, y: 0 },
-        },
-        state: 'IDLE',
-        activeFinger: null,
-        proximityDistance: 1.0,
-        pinchCenter: null,
-        dragOffset: { dx: 0, dy: 0 },
-        holdDurationMs: 0,
-        triggerTimestamp: 0,
-      });
-
-      const gestureData = {
-        left: closestFrame?.leftHand || defaultHand('left'),
-        right: closestFrame?.rightHand || defaultHand('right'),
-      };
-
-      const nowMs = targetTime * 1000;
-
-      // Check active events
-      for (const ev of gestureEvents) {
-        const isActive = targetTime >= ev.startTime && targetTime <= ev.releaseTime;
-        const slotId = `${ev.hand}-${ev.finger}`;
-
-        if (isActive) {
-          dedicatedRenderer.spawnFloatingText(slotId, ev.hand, ev.text, ev.x, ev.y);
-
-          // Trigger audio into destNode
-          if (!triggeredAudioEvents.has(ev.id)) {
-            triggeredAudioEvents.add(ev.id);
-            const slot = getSlot(ev.hand, ev.finger);
-            if (slot?.audioBuffer) {
-              const src = ctx.createBufferSource();
-              src.buffer = slot.audioBuffer;
-              src.connect(destNode);
-              src.start();
-            }
-          }
-        } else if (targetTime > ev.releaseTime) {
-          dedicatedRenderer.releaseFloatingText(slotId);
-        }
-      }
-
-      // Render frame
-      dedicatedRenderer.renderFrame(video, gestureData, config.trackingVisible, nowMs);
-
-      const progress = Math.min(100, Math.round(((i + 1) / totalFrames) * 100));
-      setExportProgress(progress);
-      setExportStatus(`SYNTHESIZING & EXPORTING ${progress}% (${targetTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s)`);
-
-      // Yield
-      await new Promise((r) => setTimeout(r, 10));
-    }
-
-    // Finish recording
-    recorder.onstop = () => {
-      const finalBlob = new Blob(recordedBlobs, { type: mimeType });
-      const downloadUrl = URL.createObjectURL(finalBlob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-      a.download = `fingercontrol-export-${Date.now()}.webm`;
-      a.click();
-      URL.revokeObjectURL(downloadUrl);
-
-      setIsExporting(false);
-      video.currentTime = originalTime;
-    };
-
-    recorder.stop();
-  };
-
   const formatTime = (secs: number) => {
     const m = Math.floor(secs / 60);
     const s = Math.floor(secs % 60);
@@ -562,7 +454,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
-              audioManager.stopAll();
+              speechEngine.stop();
               onBackToSetup();
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
@@ -586,10 +478,26 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
         {/* Right Header Controls */}
         <div className="flex items-center gap-3">
+          {/* Test Speech Button */}
+          <button
+            onClick={() => {
+              speechEngine.unlockSpeech();
+              const firstSlot = config.slots[0];
+              if (firstSlot) {
+                speechEngine.triggerWord(firstSlot.id, firstSlot.text || 'TEST', 0);
+              }
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-[#C5D1DE] hover:text-white transition-colors cursor-pointer"
+            title="Click to test speech synthesis sound"
+          >
+            <Volume2 className="w-3.5 h-3.5 text-[#FF0000]" />
+            <span className="hidden sm:inline">TEST SOUND</span>
+          </button>
+
           {/* Tracking toggle */}
           <button
             onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors cursor-pointer ${
               config.trackingVisible
                 ? 'bg-[#152336] border-[#FF0000]/50 text-white'
                 : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
@@ -603,7 +511,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           {/* Mirror toggle */}
           <button
             onClick={() => onUpdateConfig({ ...config, mirroredVideo: !config.mirroredVideo })}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors ${
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors cursor-pointer ${
               config.mirroredVideo
                 ? 'bg-[#152336] border-[#2A4365] text-white'
                 : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
@@ -614,43 +522,31 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <span className="hidden sm:inline">MIRROR</span>
           </button>
 
-          {/* Camera Mode: Record Button */}
-          {inputMode === 'CAMERA' && (
+          {/* Upload Video Mode: Reanalyze */}
+          {inputMode === 'UPLOAD_VIDEO' && (
             <button
-              onClick={isRecordingCamera ? handleStopCameraRecording : handleStartCameraRecording}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm ${
-                isRecordingCamera
-                  ? 'bg-[#FF0000] text-white animate-pulse'
-                  : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
-              }`}
+              onClick={onReanalyze}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
+              title="Re-run Hand Detection Analysis"
             >
-              <Circle className="w-3.5 h-3.5 fill-current" />
-              {isRecordingCamera ? `REC (${recordingSeconds}s)` : 'RECORD'}
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">REANALYZE</span>
             </button>
           )}
 
-          {/* Upload Video Mode: Reanalyze & Export Buttons */}
-          {inputMode === 'UPLOAD_VIDEO' && (
-            <>
-              <button
-                onClick={onReanalyze}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors"
-                title="Re-run Hand Detection Analysis"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">REANALYZE</span>
-              </button>
-
-              <button
-                onClick={handleExportUploadedVideo}
-                disabled={isExporting}
-                className="flex items-center gap-2 px-4 py-1.5 rounded bg-[#FF0000] hover:bg-[#E60000] disabled:bg-[#4A1515] text-white text-xs font-bold uppercase tracking-wider transition-colors shadow-sm"
-              >
-                <Download className="w-3.5 h-3.5" />
-                EXPORT VIDEO
-              </button>
-            </>
-          )}
+          {/* Record Button (Uses getDisplayMedia with tab audio) */}
+          <button
+            onClick={isRecording ? handleStopRecording : handleStartRecording}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer ${
+              isRecording
+                ? 'bg-[#FF0000] text-white animate-pulse'
+                : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
+            }`}
+            title="Record Screen & Speech Audio"
+          >
+            <Circle className="w-3.5 h-3.5 fill-current" />
+            {isRecording ? `REC (${recordingSeconds}s)` : 'RECORD'}
+          </button>
         </div>
       </header>
 
@@ -675,26 +571,23 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             className="max-w-full max-h-[75vh] object-contain block"
           />
 
-          {/* Export Overlay Modal */}
-          {isExporting && (
-            <div className="absolute inset-0 bg-[#07111F]/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 z-20">
-              <div className="w-full max-w-sm space-y-3 text-center">
-                <span className="w-3 h-3 rounded-full bg-[#FF0000] inline-block animate-ping"></span>
-                <h3 className="text-sm font-bold text-white uppercase tracking-widest">
-                  SYNTHESIZING FINAL VIDEO
-                </h3>
-                <p className="text-xs text-[#8A9BA8]">{exportStatus}</p>
-
-                <div className="w-full h-2.5 bg-[#0C1929] border border-[#1E2E42] rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-[#FF0000] transition-all duration-100"
-                    style={{ width: `${exportProgress}%` }}
-                  />
-                </div>
-                <div className="text-xs text-white font-bold">{exportProgress}%</div>
-              </div>
+          {/* Two-Hand Heart Detected Overlay Badge */}
+          {heartDetected && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-[#FF0000]/90 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 animate-bounce z-20">
+              <Heart className="w-4 h-4 fill-white" />
+              <span className="text-xs font-bold tracking-wider uppercase">
+                TWO-HAND HEART // FULL PHRASE SPEAKING
+              </span>
             </div>
           )}
+        </div>
+
+        {/* Recording Hint Notice */}
+        <div className="mt-2 text-[10px] text-[#8A9BA8] flex items-center gap-1.5">
+          <Info className="w-3 h-3 text-[#FF0000]" />
+          <span>
+            Recording: Select "This Tab" and enable "Also share tab audio" in the browser popup to record browser speech synthesis.
+          </span>
         </div>
 
         {/* Upload Mode: Interactive Playback & Event Timeline */}
@@ -704,7 +597,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <div className="flex items-center gap-3">
               <button
                 onClick={togglePlayPause}
-                className="p-2 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-white transition-colors"
+                className="p-2 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-white transition-colors cursor-pointer"
                 title={isPlaying ? 'Pause' : 'Play'}
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
@@ -777,7 +670,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleDeleteEvent(ev.id)}
-                          className="text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1 transition-colors"
+                          className="text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1 transition-colors cursor-pointer"
                           title="Delete False Trigger"
                         >
                           <Trash2 className="w-3 h-3" /> DELETE EVENT

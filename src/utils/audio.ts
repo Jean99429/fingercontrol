@@ -14,12 +14,19 @@ class AudioManager {
       this.ctx = new AudioCtxClass();
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.ctx.resume().catch(() => {});
     }
     if (!this.destinationNode && this.ctx) {
       this.destinationNode = this.ctx.createMediaStreamDestination();
     }
     return this.ctx;
+  }
+
+  public async resumeIfNeeded(): Promise<void> {
+    const ctx = this.initAudioContext();
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
   }
 
   public getAudioContext(): AudioContext {
@@ -38,6 +45,9 @@ class AudioManager {
    */
   public async decodeAudioFile(file: File | ArrayBuffer): Promise<AudioBuffer> {
     const ctx = this.initAudioContext();
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
     let arrayBuffer: ArrayBuffer;
 
     if (file instanceof File) {
@@ -52,11 +62,36 @@ class AudioManager {
   }
 
   /**
+   * Generate a clean synthetic sample AudioBuffer for testing
+   */
+  public createSampleAudioBuffer(pitchHz: number, durationSec: number = 0.45, type: 'synth' | 'punch' = 'synth'): AudioBuffer {
+    const ctx = this.initAudioContext();
+    const sampleRate = ctx.sampleRate;
+    const numSamples = Math.floor(sampleRate * durationSec);
+    const buffer = ctx.createBuffer(1, numSamples, sampleRate);
+    const data = buffer.getChannelData(0);
+
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / sampleRate;
+      const env = Math.exp(-t * (type === 'punch' ? 9 : 5));
+      const osc1 = Math.sin(2 * Math.PI * pitchHz * t);
+      const osc2 = 0.4 * Math.sin(2 * Math.PI * (pitchHz * 1.5) * t);
+      const osc3 = 0.2 * Math.sin(2 * Math.PI * (pitchHz * 2.0) * t);
+      data[i] = (osc1 + osc2 + osc3) * env * 0.7;
+    }
+
+    return buffer;
+  }
+
+  /**
    * Play an AudioBuffer for preview in the setup UI
    */
   public playBuffer(buffer: AudioBuffer, onEnded?: () => void): void {
     this.stopPreview();
     const ctx = this.initAudioContext();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
@@ -99,6 +134,10 @@ class AudioManager {
    */
   public triggerAudio(buffer: AudioBuffer, when: number = 0): AudioBufferSourceNode {
     const ctx = this.initAudioContext();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+
     const source = ctx.createBufferSource();
     source.buffer = buffer;
 
@@ -129,10 +168,76 @@ class AudioManager {
   }
 
   /**
+   * Speak text out loud using Web Speech Synthesis API
+   */
+  public speakText(text: string, onEnded?: () => void): void {
+    if (!text || !text.trim()) return;
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel(); // Cancel queue to ensure instant response
+        const utterance = new SpeechSynthesisUtterance(text.trim());
+        utterance.rate = 1.1; // crisp and responsive
+        utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+
+        const voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length > 0) {
+          const preferred =
+            voices.find((v) => v.lang.startsWith('en') && !v.name.includes('Google')) ||
+            voices.find((v) => v.lang.startsWith('en')) ||
+            voices.find((v) => v.default) ||
+            voices[0];
+          if (preferred) utterance.voice = preferred;
+        }
+
+        if (onEnded) {
+          utterance.onend = () => onEnded();
+          utterance.onerror = () => onEnded();
+        }
+
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn('SpeechSynthesis error:', err);
+        onEnded?.();
+      }
+    }
+  }
+
+  /**
+   * Universal word trigger sound:
+   * - If an audio buffer is present, play it through Web Audio API
+   * - If not, speak out the word with SpeechSynthesis and play an acoustic synth chime
+   */
+  public triggerWordSound(text: string, buffer?: AudioBuffer, pitchHint: number = 440): void {
+    if (buffer) {
+      this.triggerAudio(buffer);
+    } else {
+      // Speak the word directly
+      this.speakText(text);
+
+      // Also generate instant harmonic click/tone into Web Audio graph & recording stream
+      try {
+        const toneBuffer = this.createSampleAudioBuffer(pitchHint, 0.25, 'punch');
+        this.triggerAudio(toneBuffer);
+      } catch (e) {
+        console.warn('Tone trigger error:', e);
+      }
+    }
+  }
+
+  /**
    * Stop all currently playing audio sources
    */
   public stopAll(): void {
     this.stopPreview();
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        // Ignore
+      }
+    }
     this.activeSources.forEach((src) => {
       try {
         src.stop();

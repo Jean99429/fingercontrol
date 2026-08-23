@@ -99,7 +99,7 @@ export class VisualRenderer {
 
   /**
    * Render complete frame:
-   * 1. Draw raw video image (unmodified RGB)
+   * 1. Draw raw video image (unmodified RGB, mirrored if enabled)
    * 2. Draw coordinate frames and #FF0000 fingertip dots
    * 3. Draw active/fading floating text words
    */
@@ -107,7 +107,8 @@ export class VisualRenderer {
     video: HTMLVideoElement | CanvasImageSource,
     gestureData: { left: HandGestureData; right: HandGestureData },
     trackingVisible: boolean = true,
-    now: number = performance.now()
+    now: number = performance.now(),
+    isMirrored: boolean = false
   ): void {
     if (!this.canvas || !this.ctx) return;
 
@@ -115,9 +116,17 @@ export class VisualRenderer {
     const height = this.canvas.height;
     const ctx = this.ctx;
 
-    // 1. Draw the clean, raw video frame
+    // 1. Draw the clean, raw video frame (with mirroring if configured)
     try {
-      ctx.drawImage(video, 0, 0, width, height);
+      if (isMirrored) {
+        ctx.save();
+        ctx.translate(width, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(video, 0, 0, width, height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(video, 0, 0, width, height);
+      }
     } catch {
       ctx.fillStyle = '#080808';
       ctx.fillRect(0, 0, width, height);

@@ -4,7 +4,7 @@ import { loadConfig, saveConfig } from './utils/storage';
 import { SetupScreen } from './components/SetupScreen';
 import { PerformanceScreen } from './components/PerformanceScreen';
 import { gestureRecognizer } from './vision/gestureRecognizer';
-import { audioManager } from './utils/audio';
+import { speechEngine } from './utils/speechEngine';
 
 export const App: React.FC = () => {
   const [currentScreen, setCurrentScreen] = useState<'SETUP' | 'PERFORMANCE'>('SETUP');
@@ -34,6 +34,12 @@ export const App: React.FC = () => {
   // Errors & Notifications
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // Initialize Speech Voices
+  useEffect(() => {
+    speechEngine.loadVoices();
+    speechEngine.updateVoiceAssignments(config.slots);
+  }, [config.slots]);
+
   // Enumerate camera devices
   const refreshDevices = useCallback(async () => {
     try {
@@ -58,6 +64,7 @@ export const App: React.FC = () => {
   const handleUpdateConfig = (newConfig: FingercontrolConfig) => {
     setConfig(newConfig);
     saveConfig(newConfig);
+    speechEngine.updateVoiceAssignments(newConfig.slots);
   };
 
   // Manage Display Video file selection & metadata extraction
@@ -117,12 +124,9 @@ export const App: React.FC = () => {
   const handleStartCamera = async () => {
     setErrorMessage(null);
 
-    // 1. Initialize Audio Context on user click
-    try {
-      audioManager.initAudioContext();
-    } catch (e) {
-      console.warn('AudioContext init error:', e);
-    }
+    // 1. Unlock Speech Synthesis on user click
+    await speechEngine.unlockSpeech();
+    speechEngine.updateVoiceAssignments(config.slots);
 
     // 2. Request Camera access
     try {
@@ -162,12 +166,9 @@ export const App: React.FC = () => {
     setAnalysisProgress(0);
     setAnalysisStatus('INITIALIZING VISION TRACKER...');
 
-    // 1. Initialize Audio Context
-    try {
-      audioManager.initAudioContext();
-    } catch (e) {
-      console.warn('AudioContext init error:', e);
-    }
+    // 1. Unlock Speech Synthesis
+    await speechEngine.unlockSpeech();
+    speechEngine.updateVoiceAssignments(config.slots);
 
     try {
       // 2. Create offscreen video element for analysis
@@ -199,10 +200,10 @@ export const App: React.FC = () => {
       setIsAnalyzing(false);
       setCurrentScreen('PERFORMANCE');
     } catch (err: unknown) {
-      console.error('Video analysis error:', err);
+      console.error('Video analysis failed:', err);
       setIsAnalyzing(false);
       setErrorMessage(
-        'An error occurred during video analysis. Please ensure the video format is supported by your browser.'
+        `Video analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}. Please try another video file.`
       );
     }
   };
@@ -214,7 +215,7 @@ export const App: React.FC = () => {
       cameraStream.getTracks().forEach((t) => t.stop());
       setCameraStream(null);
     }
-    audioManager.stopAll();
+    speechEngine.stop();
     setCurrentScreen('SETUP');
   };
 
