@@ -1,4 +1,4 @@
-import { KokoroTTS } from 'kokoro-js';
+import type { KokoroTTS } from 'kokoro-js';
 import { ContentSlot } from '../types/config';
 import { audioManager } from './audio';
 
@@ -17,8 +17,13 @@ interface AssignedVoiceConfig {
   speed: number;
 }
 
-const FEMALE_VOICES: KokoroVoice[] = ['af_heart', 'af_bella', 'af_nicole', 'af_sarah'];
-const MALE_VOICES: KokoroVoice[] = ['am_michael', 'am_fenrir', 'am_puck', 'bm_fable'];
+// Keep only the three voices currently heard on JEAN, I and AM, then reuse
+// that palette across all eight finger slots.
+const VOICE_PALETTE: AssignedVoiceConfig[] = [
+  { voice: 'af_heart', speed: 1.02 },
+  { voice: 'am_puck', speed: 0.98 },
+  { voice: 'af_sarah', speed: 1.02 },
+];
 const MODEL_ID = 'onnx-community/Kokoro-82M-v1.0-ONNX';
 
 /** Natural neural TTS whose generated buffers are audible and exportable. */
@@ -34,16 +39,17 @@ export class SpeechEngine {
   private useNeuralAudio = false;
 
   public loadVoices(): SpeechSynthesisVoice[] {
-    void this.loadModel();
     return [];
   }
 
   private loadModel(): Promise<KokoroTTS> {
     if (!this.modelPromise) {
-      this.modelPromise = KokoroTTS.from_pretrained(MODEL_ID, {
-        dtype: 'q8',
-        device: 'wasm',
-      }).then((model) => {
+      this.modelPromise = import('kokoro-js').then(({ KokoroTTS }) =>
+        KokoroTTS.from_pretrained(MODEL_ID, {
+          dtype: 'q8',
+          device: 'wasm',
+        })
+      ).then((model) => {
         this.modelReady = true;
         return model;
       }).catch((error) => {
@@ -63,7 +69,6 @@ export class SpeechEngine {
       unlock.volume = 0;
       window.speechSynthesis.speak(unlock);
     }
-    void this.loadModel();
   }
 
   private speakSystem(text: string, slotIndex: number): boolean {
@@ -89,14 +94,11 @@ export class SpeechEngine {
 
   public updateVoiceAssignments(slots: ContentSlot[]): void {
     slots.forEach((slot, index) => {
-      const female = index % 2 === 0;
-      const pool = female ? FEMALE_VOICES : MALE_VOICES;
-      const assignment = { voice: pool[Math.floor(index / 2) % pool.length], speed: female ? 1.02 : 0.98 };
+      const assignment = VOICE_PALETTE[index % VOICE_PALETTE.length];
       this.assignments.set(slot.id, assignment);
       this.assignments.set(`${slot.hand}-${slot.finger}`, assignment);
       this.assignments.set(String(index), assignment);
     });
-    void this.prewarm(slots);
   }
 
   public normalizeSpeechText(text: string): string {
@@ -105,8 +107,7 @@ export class SpeechEngine {
 
   private getAssignment(slotId: string, index: number): AssignedVoiceConfig {
     return this.assignments.get(slotId) || {
-      voice: index % 2 === 0 ? 'af_heart' : 'am_michael',
-      speed: index % 2 === 0 ? 1.02 : 0.98,
+      ...VOICE_PALETTE[index % VOICE_PALETTE.length],
     };
   }
 

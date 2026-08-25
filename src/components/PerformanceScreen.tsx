@@ -45,6 +45,16 @@ interface PerformanceScreenProps {
 
 const FINGER_LIST = ['index', 'middle', 'ring', 'pinky'];
 
+const getMp4MimeType = (): string => {
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1.42E01E,opus',
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4',
+  ];
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+};
+
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   inputMode,
   config,
@@ -245,13 +255,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         };
       }
 
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp8,opus';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
+      const mimeType = getMp4MimeType();
+      if (!mimeType) throw new Error('This browser cannot export MP4.');
 
       recordedChunksRef.current = [];
       const recorder = new MediaRecorder(stream, { mimeType });
@@ -267,7 +272,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `fingercontrol-performance-${Date.now()}.webm`;
+        a.download = `fingercontrol-performance-${Date.now()}.mp4`;
         a.click();
         URL.revokeObjectURL(url);
 
@@ -354,9 +359,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       const exportStream = new MediaStream(exportTracks);
       screenStreamRef.current = exportStream;
 
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+      const mimeType = getMp4MimeType();
+      if (!mimeType) throw new Error('This browser cannot export MP4.');
 
       recordedChunksRef.current = [];
       const recorder = new MediaRecorder(exportStream, { mimeType });
@@ -367,7 +371,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       recorder.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: mimeType });
         const url = URL.createObjectURL(blob);
-        const fileName = `fingercontrol-export-${Date.now()}.webm`;
+        const fileName = `fingercontrol-export-${Date.now()}.mp4`;
         setCompletedExport({ url, fileName });
         const link = document.createElement('a');
         link.href = url;
