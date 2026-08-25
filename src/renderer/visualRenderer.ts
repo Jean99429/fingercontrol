@@ -45,9 +45,10 @@ const TRACK_LIME_RGB = '215, 255, 63';
 const SIGNAL_RED = '#ff2b20';
 const SIGNAL_RED_RGB = '255, 43, 32';
 const DATA_COLORS: Array<[number, number, number]> = [
-  [91, 231, 255],
-  [188, 103, 255],
-  [231, 255, 67],
+  [91, 226, 255],
+  [255, 91, 194],
+  [137, 255, 101],
+  [255, 225, 72],
 ];
 
 function dataColor(phase: number, alpha: number = 1): string {
@@ -421,6 +422,8 @@ export class VisualRenderer {
         { name: 'ring', pt: ft.ring },
         { name: 'pinky', pt: ft.pinky },
       ];
+      // Keep one readable coordinate label per detected hand at all times.
+      const coordinateTipName: TipName = (hand.activeFinger as TipName | null) || 'index';
 
       for (const tip of tips) {
         const px = tip.pt.x * width;
@@ -449,9 +452,9 @@ export class VisualRenderer {
         const sx = tracker.x;
         const sy = tracker.y;
         const isLiveTarget = isTarget && hand.state !== 'IDLE';
-        const half = Math.max(13, (isLiveTarget ? (hand.state === 'ACTIVE' ? 16 : 15) : 13) * scale);
-        const corner = Math.min(half * 0.42, 6 * scale);
-        const frameAlpha = isLiveTarget ? (hand.state === 'ACTIVE' ? 0.98 : 0.86) : 0.68;
+        const half = Math.max(19, (isLiveTarget ? (hand.state === 'ACTIVE' ? 27 : 24) : 21) * scale);
+        const corner = Math.min(half * 0.4, 9 * scale);
+        const frameAlpha = isLiveTarget ? 1 : 0.88;
         const lag = Math.hypot(px - sx, py - sy);
 
         ctx.save();
@@ -466,9 +469,12 @@ export class VisualRenderer {
           ctx.stroke();
         }
 
-        // Small open-corner tracker inspired by machine-vision / terminal overlays.
+        // Full faint cell + strong open corners. This stays visible over noisy video.
+        ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha * 0.36})`;
+        ctx.lineWidth = Math.max(0.9, 1.15 * scale);
+        ctx.strokeRect(sx - half + 0.5, sy - half + 0.5, half * 2 - 1, half * 2 - 1);
         ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha})`;
-        ctx.lineWidth = Math.max(0.65, (isLiveTarget ? 0.95 : 0.72) * scale);
+        ctx.lineWidth = Math.max(1.25, (isLiveTarget ? 1.75 : 1.4) * scale);
         ctx.beginPath();
         ctx.moveTo(sx - half, sy - half + corner); ctx.lineTo(sx - half, sy - half); ctx.lineTo(sx - half + corner, sy - half);
         ctx.moveTo(sx + half - corner, sy - half); ctx.lineTo(sx + half, sy - half); ctx.lineTo(sx + half, sy - half + corner);
@@ -501,34 +507,38 @@ export class VisualRenderer {
           ctx.fillText('T', sx + half + 4 * scale, sy);
         }
 
-        // Only the selected finger gets a coordinate chip: two tiny terminal cells,
-        // placed opposite the large floating word so both remain readable.
-        if (hand.activeFinger === tip.name && hand.state !== 'IDLE') {
+        // One persistent terminal chip per hand; the label follows the active
+        // finger and falls back to the index finger while idle.
+        if (coordinateTipName === tip.name) {
           const code = `${handKey === 'left' ? 'L' : 'R'}${['thumb', 'index', 'middle', 'ring', 'pinky'].indexOf(tip.name)}`;
           const coords = `${(tip.pt.x * 100).toFixed(1)},${(tip.pt.y * 100).toFixed(1)}`;
-          const fontPx = Math.max(7, Math.round(7.5 * scale));
-          ctx.font = `500 ${fontPx}px 'JetBrains Mono', monospace`;
+          const fontPx = Math.max(11, Math.round(12 * scale));
+          ctx.font = `500 ${fontPx}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
           ctx.textBaseline = 'middle';
-          const padX = 4 * scale;
-          const cellH = 13 * scale;
+          const padX = Math.max(6, 7 * scale);
+          const cellH = Math.max(19, 21 * scale);
           const codeW = ctx.measureText(code).width + padX * 2;
           const coordW = ctx.measureText(coords).width + padX * 2;
-          const chipX = handKey === 'left' ? sx - half - coordW - 5 * scale : sx + half + 5 * scale;
-          const chipY = sy + half + 4 * scale;
+          const chipX = handKey === 'left' ? sx - half - coordW - 8 * scale : sx + half + 8 * scale;
+          const chipY = sy + half + 7 * scale;
+          const colorPhase = performance.now() / 9000 + tip.pt.x * 0.5 + tip.pt.y * 0.28;
 
-          ctx.fillStyle = 'rgba(7, 9, 11, 0.76)';
+          // P1-style translucent coloured cells with high-contrast white type.
+          ctx.fillStyle = dataColor(colorPhase, 0.48);
           ctx.fillRect(chipX, chipY, coordW, cellH);
           const codeX = handKey === 'left' ? chipX + coordW - codeW : chipX;
-          ctx.fillStyle = 'rgba(7, 9, 11, 0.86)';
+          ctx.fillStyle = dataColor(colorPhase + 0.08, 0.62);
           ctx.fillRect(codeX, chipY - cellH, codeW, cellH - 1);
-          const coordColor = dataColor(performance.now() / 9000 + tip.pt.x * 0.5 + tip.pt.y * 0.28, 0.94);
-          ctx.strokeStyle = dataColor(performance.now() / 9000 + tip.pt.x * 0.5 + tip.pt.y * 0.28, 0.52);
-          ctx.lineWidth = Math.max(0.5, 0.6 * scale);
+          ctx.strokeStyle = dataColor(colorPhase, 0.9);
+          ctx.lineWidth = Math.max(0.8, 1 * scale);
           ctx.strokeRect(chipX + 0.5, chipY + 0.5, coordW - 1, cellH - 1);
           ctx.strokeRect(codeX + 0.5, chipY - cellH + 0.5, codeW - 1, cellH - 2);
-          ctx.fillStyle = coordColor;
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+          ctx.shadowBlur = 3 * scale;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
           ctx.fillText(coords, chipX + padX, chipY + cellH / 2);
           ctx.fillText(code, codeX + padX, chipY - cellH / 2);
+          ctx.shadowBlur = 0;
         }
         ctx.restore();
       }
@@ -575,9 +585,11 @@ export class VisualRenderer {
       const text = item.text.trim();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
       const handCode = item.hand === 'left' ? 'L' : 'R';
+      const accentSeed = Array.from(item.id).reduce((total, char) => total + char.charCodeAt(0), 0);
+      const accentPhase = (accentSeed % DATA_COLORS.length) / DATA_COLORS.length;
 
       const fontSize = Math.round(44 * scale);
-      ctx.font = `italic 500 ${fontSize}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
+      ctx.font = `500 ${fontSize}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
       const metrics = ctx.measureText(text);
       const textW = metrics.width;
       const side = item.hand === 'left' ? 1 : -1;
@@ -601,9 +613,7 @@ export class VisualRenderer {
           ctx.beginPath();
           ctx.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
           ctx.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
-          ctx.strokeStyle = i % 4 === 0
-            ? dataColor(i / 14 + age / 5000, burstAlpha * 0.9)
-            : `rgba(${SIGNAL_RED_RGB}, ${burstAlpha * 0.72})`;
+          ctx.strokeStyle = dataColor(accentPhase + (i % 4) * 0.08, burstAlpha * (i % 3 === 0 ? 0.95 : 0.7));
           ctx.lineWidth = Math.max(0.7, (i % 3 === 0 ? 1.5 : 0.85) * scale);
           ctx.stroke();
         }
@@ -640,38 +650,44 @@ export class VisualRenderer {
         }
       };
 
-      // Three short chromatic echoes form a typographic motion trail.
+      // Three bright P2-inspired colour echoes form a typographic motion trail.
       for (let trail = 3; trail >= 1; trail--) {
-        const trailAlpha = (0.08 + (4 - trail) * 0.035) * item.alpha * easeOut;
+        const trailAlpha = (0.14 + (4 - trail) * 0.055) * item.alpha * easeOut;
         drawCharacterRun(
           drawX - motionX * trail * 1.9,
           drawY - motionY * trail * 1.9 + trail * 2.2 * scale,
-          dataColor(item.spawnTime / 7000 + trail * 0.19, trailAlpha),
+          dataColor(accentPhase + trail * 0.075, trailAlpha),
           2.8 + trail * 0.45
         );
       }
 
-      // Main word: signal red, character-by-character, with a dark edge for video legibility.
+      // Main word: white terminal type with a coloured registration offset.
+      drawCharacterRun(drawX + 3 * scale, drawY + 2 * scale, dataColor(accentPhase, 0.9), 2.1);
       ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
       ctx.shadowBlur = 8 * scale;
-      drawCharacterRun(drawX, drawY, SIGNAL_RED, 2.1, true);
+      drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 2.1, true);
       ctx.shadowBlur = 0;
 
-      // A short lime trace anchors the word without turning it into a UI card.
+      // A short per-word colour trace anchors the type without a heavy card.
       const lineY = drawY + 9 * scale;
-      ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, 0.88)`;
+      ctx.strokeStyle = dataColor(accentPhase, 0.96);
       ctx.lineWidth = Math.max(0.8, 1 * scale);
       ctx.beginPath();
       ctx.moveTo(drawX, lineY);
       ctx.lineTo(drawX + textW * easeOut * 0.72, lineY);
       ctx.stroke();
-      ctx.fillStyle = TRACK_LIME;
+      ctx.fillStyle = dataColor(accentPhase + 0.08, 1);
       ctx.fillRect(drawX - 2 * scale, lineY - 2 * scale, 4 * scale, 4 * scale);
 
-      // Compact changing data label; visually separate from the red spoken word.
-      ctx.font = `500 ${Math.max(7, Math.round(8 * scale))}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
-      ctx.fillStyle = dataColor(now / 9000 + (item.hand === 'left' ? 0 : 0.33), 0.94);
-      ctx.fillText(`${handCode}/${finger} · VOICE`, drawX, drawY - (fontSize + 7 * scale));
+      // Compact translucent data cell with white code text.
+      const metaText = `${handCode}/${finger} · VOICE`;
+      ctx.font = `500 ${Math.max(8, Math.round(9 * scale))}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
+      const metaW = ctx.measureText(metaText).width;
+      const metaY = drawY - (fontSize + 7 * scale);
+      ctx.fillStyle = dataColor(accentPhase, 0.48);
+      ctx.fillRect(drawX - 4 * scale, metaY - 10 * scale, metaW + 8 * scale, 14 * scale);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
+      ctx.fillText(metaText, drawX, metaY);
 
       ctx.restore();
     });
