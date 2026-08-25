@@ -72,6 +72,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const recordedChunksRef = useRef<Blob[]>([]);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportStage, setExportStage] = useState<'idle' | 'preparing' | 'rendering'>('idle');
 
   // Selected event in timeline (for inspection or deletion)
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -305,11 +306,24 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     if (!canvas || !video || isExporting) return;
 
     try {
+      // Give immediate feedback. Neural speech preparation can take a while on
+      // first use while the model is loaded, so never leave the button looking
+      // as though the click was ignored.
+      setIsExporting(true);
+      setExportStage('preparing');
       speechEngine.stop();
       triggeredEventIdsRef.current.clear();
       visualRenderer.reset();
       speechEngine.setUseNeuralAudio(true);
-      await speechEngine.prepare(config.slots);
+      const usedSlots = config.slots.filter((slot) =>
+        gestureEvents.some(
+          (event) =>
+            event.hand === slot.hand &&
+            event.finger === slot.finger &&
+            event.releaseTime - event.startTime >= 0.12
+        )
+      );
+      await speechEngine.prepare(usedSlots);
 
       const canvasStream = canvas.captureStream(30);
       const exportTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
@@ -351,7 +365,9 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         const link = document.createElement('a');
         link.href = url;
         link.download = `fingercontrol-export-${Date.now()}.webm`;
+        document.body.appendChild(link);
         link.click();
+        link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         exportStream.getTracks().forEach((track) => track.stop());
         audioMixSources.forEach((source) => source.disconnect());
@@ -359,6 +375,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         screenStreamRef.current = null;
         mediaRecorderRef.current = null;
         setIsExporting(false);
+        setExportStage('idle');
         setIsPlaying(false);
         speechEngine.setUseNeuralAudio(false);
       };
@@ -370,7 +387,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       video.loop = false;
       video.currentTime = 0;
       setCurrentTime(0);
-      setIsExporting(true);
+      setExportStage('rendering');
       setIsPlaying(true);
       recorder.start(250);
       await video.play();
@@ -380,6 +397,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       screenStreamRef.current = null;
       mediaRecorderRef.current = null;
       setIsExporting(false);
+      setExportStage('idle');
       speechEngine.setUseNeuralAudio(false);
     }
   };
@@ -670,7 +688,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
               title="Render and download the processed display video"
             >
               <Download className="w-3.5 h-3.5" />
-              {isExporting ? `EXPORTING ${formatTime(currentTime)} / ${formatTime(duration)}` : 'DOWNLOAD VIDEO'}
+              {exportStage === 'preparing'
+                ? 'PREPARING AUDIO…'
+                : exportStage === 'rendering'
+                  ? `EXPORTING ${formatTime(currentTime)} / ${formatTime(duration)}`
+                  : 'DOWNLOAD VIDEO'}
             </button>
           )}
         </div>
