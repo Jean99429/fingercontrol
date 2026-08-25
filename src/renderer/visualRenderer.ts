@@ -45,10 +45,10 @@ const TRACK_LIME_RGB = '215, 255, 63';
 const SIGNAL_RED = '#ff2b20';
 const SIGNAL_RED_RGB = '255, 43, 32';
 const DATA_COLORS: Array<[number, number, number]> = [
-  [236, 229, 51],  // #ECE533
-  [243, 46, 168],  // #F32EA8
-  [24, 193, 232],  // #18C1E8
-  [24, 245, 98],   // #18F562
+  [46, 217, 255],  // #2ED9FF
+  [141, 164, 255], // #8DA4FF
+  [203, 140, 255], // #CB8CFF
+  [255, 61, 190],  // #FF3DBE
 ];
 
 function dataColor(phase: number, alpha: number = 1): string {
