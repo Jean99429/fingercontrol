@@ -70,22 +70,10 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
     onUpdateConfig({ ...config, slots: newSlots });
   };
 
-  // Validation between display and tracking video
-  const getTrackingVideoMismatchWarning = (): string | null => {
-    if (!displayVideoMeta || !trackingVideoMeta) return null;
-    const durDiff = Math.abs(displayVideoMeta.duration - trackingVideoMeta.duration);
-    if (durDiff > 0.1) {
-      return `Duration mismatch: ${displayVideoMeta.duration.toFixed(2)}s vs ${trackingVideoMeta.duration.toFixed(2)}s (diff > 100ms)`;
-    }
-    const displayAspect = displayVideoMeta.width / displayVideoMeta.height;
-    const trackingAspect = trackingVideoMeta.width / trackingVideoMeta.height;
-    if (Math.abs(displayAspect - trackingAspect) > 0.05) {
-      return `Aspect ratio mismatch: ${displayVideoMeta.width}x${displayVideoMeta.height} vs ${trackingVideoMeta.width}x${trackingVideoMeta.height}`;
-    }
-    return null;
-  };
-
-  const trackingMismatch = getTrackingVideoMismatchWarning();
+  // The display video is the master output. Tracking-video duration and size
+  // may differ because its only job is to provide hand landmarks; both are
+  // mapped automatically during analysis and must never block playback.
+  const trackingMismatch: string | null = null;
 
   return (
     <div className="min-h-screen bg-[#07111F] text-[#E0E6ED] flex flex-col justify-center items-center px-4 py-8 font-mono select-none">

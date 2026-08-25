@@ -105,14 +105,9 @@ export class VisualRenderer {
     if (existing) {
       existing.text = text;
       existing.hand = hand;
-      existing.x = px;
-      existing.y = py;
       existing.targetX = px;
       existing.targetY = py;
-      existing.vx = 0;
-      existing.vy = 0;
       existing.active = true;
-      existing.spawnTime = performance.now();
       existing.releaseTime = 0;
       existing.alpha = 1.0;
     } else {
@@ -562,7 +557,7 @@ export class VisualRenderer {
       const age = Math.max(0, now - item.spawnTime);
       const reveal = Math.min(1, age / 90);
       const easeOut = 1 - Math.pow(1 - reveal, 3);
-      const text = item.text.trim();
+      const text = item.text.trim().toUpperCase();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
       const handCode = item.hand === 'left' ? 'L' : 'R';
       const fingerColorIndex = Math.max(0, ['INDEX', 'MIDDLE', 'RING', 'PINKY'].indexOf(finger));
@@ -609,19 +604,13 @@ export class VisualRenderer {
         originX: number,
         originY: number,
         color: string,
-        jitterAmount: number,
-        outline: boolean = false
+        jitterAmount: number
       ): void => {
         let cursor = originX;
         for (let i = 0; i < visibleChars; i++) {
           const char = text[i] || '';
           const charWidth = ctx.measureText(char).width;
           const jitter = Math.sin((i + 1) * 12.9898 + item.spawnTime * 0.004) * jitterAmount * scale;
-          if (outline) {
-            ctx.strokeStyle = 'rgba(5, 6, 8, 0.82)';
-            ctx.lineWidth = Math.max(1.5, 2.4 * scale);
-            ctx.strokeText(char, cursor, originY + jitter);
-          }
           ctx.fillStyle = color;
           ctx.fillText(char, cursor, originY + jitter);
           cursor += charWidth;
@@ -640,10 +629,7 @@ export class VisualRenderer {
       ctx.strokeRect(drawX - platePadX + 0.5, plateTop + 0.5, visibleTextW + platePadX * 2 - 1, plateHeight - 1);
 
       // White terminal type sits directly inside the coloured plate.
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 4 * scale;
-      drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 0, true);
-      ctx.shadowBlur = 0;
+      drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 0);
 
       // A short matching registration trace continues beyond the colour plate.
       const lineY = drawY + 9 * scale;

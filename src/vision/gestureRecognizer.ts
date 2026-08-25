@@ -826,13 +826,18 @@ export class GestureRecognizerManager {
       throw new Error('Could not load HandLandmarker model for video analysis.');
     }
 
-    const duration = videoElement.duration;
-    if (!duration || isNaN(duration) || duration <= 0) {
+    const trackingDuration = videoElement.duration;
+    if (!trackingDuration || isNaN(trackingDuration) || trackingDuration <= 0) {
       throw new Error('Invalid video duration.');
     }
+    const rawDisplayDuration = displayVideoElement?.duration;
+    const displayDuration = rawDisplayDuration && isFinite(rawDisplayDuration) && rawDisplayDuration > 0
+      ? rawDisplayDuration
+      : trackingDuration;
+    const displayTimeScale = displayDuration / trackingDuration;
 
     const fps = 30;
-    const totalFrames = Math.max(1, Math.floor(duration * fps));
+    const totalFrames = Math.max(1, Math.floor(trackingDuration * fps));
     const events: GestureEvent[] = [];
     const frames: VideoAnalysisFrame[] = [];
 
@@ -885,6 +890,7 @@ export class GestureRecognizerManager {
 
     for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
       const currentTime = frameIndex / fps;
+      const displayTime = Math.min(displayDuration, currentTime * displayTimeScale);
       videoElement.currentTime = currentTime;
 
       await new Promise<void>((resolve) => {
@@ -911,7 +917,7 @@ export class GestureRecognizerManager {
         if (!wasPinching && isPinching && hData.activeFinger && hData.pinchCenter) {
           tState.isPinching = true;
           tState.activeFinger = hData.activeFinger;
-          tState.triggerTimestamp = currentTime;
+          tState.triggerTimestamp = displayTime;
 
           const slot = slots.find((s) => s.hand === hand && s.finger === hData.activeFinger);
           const text = slot?.text || hData.activeFinger.toUpperCase();
@@ -922,8 +928,8 @@ export class GestureRecognizerManager {
             id: newEventId,
             hand,
             finger: hData.activeFinger,
-            startTime: currentTime,
-            releaseTime: currentTime + 1.0,
+            startTime: displayTime,
+            releaseTime: displayTime,
             x: hData.pinchCenter.x,
             y: hData.pinchCenter.y,
             text,
@@ -934,7 +940,7 @@ export class GestureRecognizerManager {
           if (evId) {
             const ev = events.find((e) => e.id === evId);
             if (ev) {
-              ev.releaseTime = Math.max(ev.startTime + 0.3, currentTime);
+              ev.releaseTime = displayTime;
             }
             activeEventId[hand] = null;
           }
@@ -942,7 +948,7 @@ export class GestureRecognizerManager {
       }
 
       frames.push({
-        timestamp: currentTime,
+        timestamp: displayTime,
         leftHand: gestureData.left,
         rightHand: gestureData.right,
       });
@@ -951,6 +957,15 @@ export class GestureRecognizerManager {
       if (frameIndex % 5 === 0 || frameIndex === totalFrames - 1) {
         onProgress(percent, `Analyzing video frame ${frameIndex + 1}/${totalFrames} (${percent}%)`);
       }
+    }
+
+    // If a pinch is still held on the tracking video's final frame, keep its
+    // word active through the end of the display-master timeline.
+    for (const hand of ['left', 'right'] as Hand[]) {
+      const evId = activeEventId[hand];
+      if (!evId) continue;
+      const ev = events.find((candidate) => candidate.id === evId);
+      if (ev) ev.releaseTime = displayDuration;
     }
 
     return { events, frames, alignment: coordinateMapping };
