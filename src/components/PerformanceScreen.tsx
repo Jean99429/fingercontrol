@@ -77,6 +77,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
   // Speech triggering tracker to avoid duplicate triggers during playback
   const triggeredEventIdsRef = useRef<Set<string>>(new Set());
+  const previousVideoTimeRef = useRef<number>(0);
 
   // Heart gesture visual feedback banner
   const [heartDetected, setHeartDetected] = useState<boolean>(false);
@@ -383,6 +384,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         const vTime = video.currentTime;
+        if (vTime + 0.05 < previousVideoTimeRef.current) {
+          triggeredEventIdsRef.current.clear();
+          visualRenderer.reset();
+        }
+        previousVideoTimeRef.current = vTime;
         setCurrentTime(vTime);
 
         // Find closest analysis frame
@@ -429,8 +435,11 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           const slotId = `${ev.hand}-${ev.finger}`;
 
           if (isActive) {
+            const currentPinch = gestureData[ev.hand].pinchCenter;
+            const triggerX = currentPinch?.x ?? ev.x;
+            const triggerY = currentPinch?.y ?? ev.y;
             // Spawn / update floating text
-            visualRenderer.spawnFloatingText(slotId, ev.hand, ev.text, ev.x, ev.y);
+            visualRenderer.spawnFloatingText(slotId, ev.hand, ev.text, triggerX, triggerY);
 
             // Trigger speech once per event
             if (!triggeredEventIdsRef.current.has(ev.id)) {
@@ -465,19 +474,32 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const handleVideoLoadedMetadata = () => {
     if (hiddenVideoRef.current) {
       setDuration(hiddenVideoRef.current.duration || 0);
-      if (isPlaying) {
+      if (inputMode === 'UPLOAD_VIDEO') {
+        hiddenVideoRef.current.pause();
+        hiddenVideoRef.current.currentTime = 0;
+        previousVideoTimeRef.current = 0;
+        triggeredEventIdsRef.current.clear();
+        setIsPlaying(false);
+      } else if (isPlaying) {
         hiddenVideoRef.current.play().catch(console.warn);
       }
     }
   };
 
   // Play / Pause toggle
-  const togglePlayPause = () => {
+  const togglePlayPause = async () => {
     if (!hiddenVideoRef.current) return;
     if (isPlaying) {
       hiddenVideoRef.current.pause();
       setIsPlaying(false);
     } else {
+      await speechEngine.unlockSpeech();
+      if (hiddenVideoRef.current.currentTime >= hiddenVideoRef.current.duration - 0.05) {
+        hiddenVideoRef.current.currentTime = 0;
+        previousVideoTimeRef.current = 0;
+        triggeredEventIdsRef.current.clear();
+        visualRenderer.reset();
+      }
       hiddenVideoRef.current.play().catch(console.warn);
       setIsPlaying(true);
     }

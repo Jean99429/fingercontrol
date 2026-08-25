@@ -560,7 +560,10 @@ export class VisualRenderer {
       const text = item.text.trim().toUpperCase();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
       const handCode = item.hand === 'left' ? 'L' : 'R';
-      const fingerColorIndex = Math.max(0, ['INDEX', 'MIDDLE', 'RING', 'PINKY'].indexOf(finger));
+      const baseFingerColorIndex = Math.max(0, ['INDEX', 'MIDDLE', 'RING', 'PINKY'].indexOf(finger));
+      const fingerColorIndex = item.hand === 'left'
+        ? baseFingerColorIndex
+        : DATA_COLORS.length - 1 - baseFingerColorIndex;
       const accentPhase = fingerColorIndex / DATA_COLORS.length;
 
       const fontSize = Math.round(44 * scale);

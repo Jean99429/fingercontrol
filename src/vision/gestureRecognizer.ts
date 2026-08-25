@@ -581,15 +581,28 @@ export class GestureRecognizerManager {
         for (let i = 0; i < detections.landmarks.length; i++) {
           const rawLandmarks = detections.landmarks[i];
           const handednessCategory = detections.handednesses?.[i]?.[0]?.categoryName;
+          const transformedWristX = isMirrored ? 1 - rawLandmarks[0].x : rawLandmarks[0].x;
 
           let handType: Hand = 'right';
-          if (handednessCategory === 'Left') {
+          // Upload mode supplies a coordinate mapping. In that mode the user
+          // configures the two visible sides of the final display, so assign
+          // two detected hands by their final on-screen horizontal order.
+          if (coordinateMapping && detections.landmarks.length >= 2) {
+            const ordered = detections.landmarks
+              .map((points, detectionIndex) => ({
+                detectionIndex,
+                x: isMirrored ? 1 - points[0].x : points[0].x,
+              }))
+              .sort((a, b) => a.x - b.x);
+            handType = ordered[0].detectionIndex === i ? 'left' : 'right';
+          } else if (coordinateMapping) {
+            handType = transformedWristX < 0.5 ? 'left' : 'right';
+          } else if (handednessCategory === 'Left') {
             handType = isMirrored ? 'right' : 'left';
           } else if (handednessCategory === 'Right') {
             handType = isMirrored ? 'left' : 'right';
           } else {
-            const wristX = isMirrored ? 1 - rawLandmarks[0].x : rawLandmarks[0].x;
-            handType = wristX < 0.5 ? 'left' : 'right';
+            handType = transformedWristX < 0.5 ? 'left' : 'right';
           }
 
           // Transform raw normalized point [0..1] with horizontal mirror and accurate coordinate mapping
