@@ -208,9 +208,9 @@ export class VisualRenderer {
     const refDim = Math.min(width, height);
     const scale = Math.max(0.6, refDim / 1080);
 
-    const normalRadius = Math.max(3.6, 4.5 * scale);
-    const approachingRadius = Math.max(4.4, 5.4 * scale);
-    const activeRadius = Math.max(5.2, 6.2 * scale);
+    const normalRadius = Math.max(6.2, 7 * scale);
+    const approachingRadius = Math.max(7.4, 8.2 * scale);
+    const activeRadius = Math.max(8.8, 10 * scale);
 
     for (const handKey of ['left', 'right'] as const) {
       const hand = gestureData[handKey];
@@ -496,7 +496,7 @@ export class VisualRenderer {
         ctx.lineWidth = Math.max(1.2, 1.5 * scale);
         ctx.stroke();
         ctx.beginPath();
-        ctx.arc(px, py, Math.max(2.8, r - 1.2 * scale), 0, Math.PI * 2);
+        ctx.arc(px, py, Math.max(5, r - 1.35 * scale), 0, Math.PI * 2);
         ctx.fillStyle = SIGNAL_RED;
         ctx.fill();
 
@@ -661,22 +661,32 @@ export class VisualRenderer {
         );
       }
 
-      // Main word: white terminal type with a coloured registration offset.
-      drawCharacterRun(drawX + 3 * scale, drawY + 2 * scale, dataColor(accentPhase, 0.9), 2.1);
+      // Tight per-word colour plate, like a machine-vision annotation label.
+      const visibleTextW = ctx.measureText(text.slice(0, visibleChars)).width;
+      const platePadX = 7 * scale;
+      const plateTop = drawY - fontSize * 0.84;
+      const plateHeight = fontSize * 1.08;
+      ctx.fillStyle = dataColor(accentPhase, 0.86);
+      ctx.fillRect(drawX - platePadX, plateTop, visibleTextW + platePadX * 2, plateHeight);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.46)';
+      ctx.lineWidth = Math.max(0.7, 0.9 * scale);
+      ctx.strokeRect(drawX - platePadX + 0.5, plateTop + 0.5, visibleTextW + platePadX * 2 - 1, plateHeight - 1);
+
+      // White terminal type sits directly inside the coloured plate.
       ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-      ctx.shadowBlur = 8 * scale;
+      ctx.shadowBlur = 4 * scale;
       drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 2.1, true);
       ctx.shadowBlur = 0;
 
-      // A short per-word colour trace anchors the type without a heavy card.
+      // A short white registration trace continues beyond the colour plate.
       const lineY = drawY + 9 * scale;
-      ctx.strokeStyle = dataColor(accentPhase, 0.96);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
       ctx.lineWidth = Math.max(0.8, 1 * scale);
       ctx.beginPath();
       ctx.moveTo(drawX, lineY);
       ctx.lineTo(drawX + textW * easeOut * 0.72, lineY);
       ctx.stroke();
-      ctx.fillStyle = dataColor(accentPhase + 0.08, 1);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
       ctx.fillRect(drawX - 2 * scale, lineY - 2 * scale, 4 * scale, 4 * scale);
 
       // Compact translucent data cell with white code text.
