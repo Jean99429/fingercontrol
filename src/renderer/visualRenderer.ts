@@ -24,6 +24,22 @@ interface SmoothBox {
   initialized: boolean;
 }
 
+type TipName = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+
+interface SmoothPoint {
+  x: number;
+  y: number;
+  initialized: boolean;
+}
+
+const createTipTrackers = (): Record<TipName, SmoothPoint> => ({
+  thumb: { x: 0, y: 0, initialized: false },
+  index: { x: 0, y: 0, initialized: false },
+  middle: { x: 0, y: 0, initialized: false },
+  ring: { x: 0, y: 0, initialized: false },
+  pinky: { x: 0, y: 0, initialized: false },
+});
+
 export class VisualRenderer {
   private canvas: HTMLCanvasElement | null = null;
   private ctx: CanvasRenderingContext2D | null = null;
@@ -37,6 +53,12 @@ export class VisualRenderer {
     right: { minX: 0, minY: 0, maxX: 0, maxY: 0, initialized: false },
   };
 
+  // A tiny amount of lag makes each fingertip feel tracked rather than stickered on.
+  private smoothedTips: Record<Hand, Record<TipName, SmoothPoint>> = {
+    left: createTipTrackers(),
+    right: createTipTrackers(),
+  };
+
   public init(canvas: HTMLCanvasElement): void {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -46,6 +68,9 @@ export class VisualRenderer {
     this.floatingTexts.clear();
     this.smoothedBoxes.left.initialized = false;
     this.smoothedBoxes.right.initialized = false;
+    for (const hand of ['left', 'right'] as const) {
+      for (const tip of Object.values(this.smoothedTips[hand])) tip.initialized = false;
+    }
   }
 
   public spawnFloatingText(slotId: string, hand: Hand, text: string, xNorm: number, yNorm: number): void {
@@ -170,6 +195,7 @@ export class VisualRenderer {
       const hand = gestureData[handKey];
       if (!hand.detected) {
         this.smoothedBoxes[handKey].initialized = false;
+        for (const tip of Object.values(this.smoothedTips[handKey])) tip.initialized = false;
         continue;
       }
 
@@ -184,11 +210,19 @@ export class VisualRenderer {
         const boxH = rawBox.maxY - rawBox.minY;
         const centerX = (rawBox.minX + rawBox.maxX) / 2;
         const centerY = (rawBox.minY + rawBox.maxY) / 2;
-        const squareSize = Math.min(0.58, Math.max(0.19, Math.max(boxW, boxH) * 1.42));
-        let targetMinX = centerX - squareSize / 2;
-        let targetMinY = centerY - squareSize / 2;
-        let targetMaxX = centerX + squareSize / 2;
-        let targetMaxY = centerY + squareSize / 2;
+        const rawPixelW = boxW * width;
+        const rawPixelH = boxH * height;
+        const shortEdge = Math.min(width, height);
+        const squareSidePx = Math.min(
+          shortEdge * 0.38,
+          Math.max(shortEdge * 0.13, Math.max(rawPixelW, rawPixelH) * 1.16)
+        );
+        const squareSizeX = squareSidePx / width;
+        const squareSizeY = squareSidePx / height;
+        let targetMinX = centerX - squareSizeX / 2;
+        let targetMinY = centerY - squareSizeY / 2;
+        let targetMaxX = centerX + squareSizeX / 2;
+        let targetMaxY = centerY + squareSizeY / 2;
 
         if (targetMinX < 0.018) {
           targetMaxX += 0.018 - targetMinX;
@@ -232,10 +266,10 @@ export class VisualRenderer {
 
         // Faint field + strong open corners. Thin lines and small data labels are
         // intentionally closer to a TouchDesigner viewport than a bounding box.
-        const cornerLen = Math.min(bw * 0.16, bh * 0.16, 34 * scale);
+        const cornerLen = Math.min(bw * 0.12, bh * 0.12, 17 * scale);
         ctx.save();
-        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.18)`;
-        ctx.lineWidth = Math.max(0.75, 1 * scale);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.075)`;
+        ctx.lineWidth = Math.max(0.6, 0.72 * scale);
         ctx.strokeRect(x1 + 0.5, y1 + 0.5, bw - 1, bh - 1);
 
         // Local axes and quarter divisions.
@@ -245,12 +279,13 @@ export class VisualRenderer {
         ctx.lineTo(x2, y1 + bh / 2);
         ctx.moveTo(x1 + bw / 2, y1);
         ctx.lineTo(x1 + bw / 2, y2);
-        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.13)`;
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.055)`;
         ctx.stroke();
         ctx.setLineDash([]);
 
         ctx.strokeStyle = SIGNAL_RED;
-        ctx.lineWidth = Math.max(1.25, 1.55 * scale);
+        ctx.globalAlpha = 0.48;
+        ctx.lineWidth = Math.max(0.75, 0.9 * scale);
         ctx.lineCap = 'square';
         ctx.lineJoin = 'miter';
 
@@ -283,12 +318,12 @@ export class VisualRenderer {
         ctx.stroke();
 
         // Measurement ticks on all four axes.
-        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.72)`;
-        ctx.lineWidth = Math.max(0.8, 1 * scale);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.42)`;
+        ctx.lineWidth = Math.max(0.6, 0.72 * scale);
         for (let i = 1; i < 4; i++) {
           const tx = x1 + (bw * i) / 4;
           const ty = y1 + (bh * i) / 4;
-          const tick = (i === 2 ? 7 : 4) * scale;
+          const tick = (i === 2 ? 4 : 2.5) * scale;
           ctx.beginPath();
           ctx.moveTo(tx, y1 - tick);
           ctx.lineTo(tx, y1 + tick);
@@ -302,24 +337,21 @@ export class VisualRenderer {
         }
 
         // Hand channel and normalized coordinates.
-        ctx.font = `500 ${Math.round(10 * scale)}px 'JetBrains Mono', monospace`;
-        ctx.fillStyle = SIGNAL_RED;
+        ctx.globalAlpha = 1;
+        ctx.font = `500 ${Math.max(7, Math.round(7.5 * scale))}px 'JetBrains Mono', monospace`;
+        ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.46)`;
         ctx.textBaseline = 'top';
         const channel = handKey === 'left' ? 'CH/L' : 'CH/R';
-        ctx.fillText(`${channel}  TRACK`, x1 + 8 * scale, y1 + 7 * scale);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.72)`;
-        ctx.fillText(`${centerX.toFixed(3)} : ${centerY.toFixed(3)}`, x2 - 8 * scale, y1 + 7 * scale);
-        ctx.textAlign = 'left';
+        ctx.fillText(`${channel}`, x1 + 5 * scale, y1 + 4 * scale);
 
         // Crosshair at pinch center (or hand center if not pinching)
         const crossCenter = hand.pinchCenter || { x: (smooth.minX + smooth.maxX) / 2, y: (smooth.minY + smooth.maxY) / 2 };
         const cx = crossCenter.x * width;
         const cy = crossCenter.y * height;
-        const crossSize = 10 * scale;
+        const crossSize = 5 * scale;
 
-        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.62)`;
-        ctx.lineWidth = Math.max(0.8, 1 * scale);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.34)`;
+        ctx.lineWidth = Math.max(0.6, 0.72 * scale);
         ctx.beginPath();
         ctx.moveTo(cx - crossSize, cy);
         ctx.lineTo(cx + crossSize, cy);
@@ -364,7 +396,7 @@ export class VisualRenderer {
       }
 
       // 3. Fingertip dots: 5 tips (thumb, index, middle, ring, pinky)
-      const tips = [
+      const tips: Array<{ name: TipName; pt: { x: number; y: number } }> = [
         { name: 'thumb', pt: ft.thumb },
         { name: 'index', pt: ft.index },
         { name: 'middle', pt: ft.middle },
@@ -385,34 +417,87 @@ export class VisualRenderer {
           r = approachingRadius;
         }
 
+        const tracker = this.smoothedTips[handKey][tip.name];
+        if (!tracker.initialized) {
+          tracker.x = px;
+          tracker.y = py;
+          tracker.initialized = true;
+        } else {
+          const follow = hand.state === 'ACTIVE' && isTarget ? 0.48 : 0.34;
+          tracker.x += (px - tracker.x) * follow;
+          tracker.y += (py - tracker.y) * follow;
+        }
+
+        const sx = tracker.x;
+        const sy = tracker.y;
+        const isLiveTarget = isTarget && hand.state !== 'IDLE';
+        const half = (isLiveTarget ? (hand.state === 'ACTIVE' ? 11 : 9.5) : 7) * scale;
+        const corner = Math.min(half * 0.44, 4.5 * scale);
+        const frameAlpha = isLiveTarget ? (hand.state === 'ACTIVE' ? 0.92 : 0.62) : 0.24;
+        const lag = Math.hypot(px - sx, py - sy);
+
         ctx.save();
 
-        // Soft signal halo keeps the landmarks legible on dithered/ASCII video.
-        const haloRadius = r + (hand.state === 'ACTIVE' && isTarget ? 10 : 6) * scale;
-        const gradient = ctx.createRadialGradient(px, py, 0, px, py, haloRadius);
-        gradient.addColorStop(0, `rgba(${SIGNAL_RED_RGB}, ${hand.state === 'ACTIVE' && isTarget ? 0.34 : 0.2})`);
-        gradient.addColorStop(1, `rgba(${SIGNAL_RED_RGB}, 0)`);
-        ctx.beginPath();
-        ctx.arc(px, py, haloRadius, 0, Math.PI * 2);
-        ctx.fillStyle = gradient;
-        ctx.fill();
+        // Hairline vector: visible only while the tracked point is moving.
+        if (lag > 1.2 * scale) {
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(px, py);
+          ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${Math.min(0.28, lag / 80)})`;
+          ctx.lineWidth = Math.max(0.55, 0.65 * scale);
+          ctx.stroke();
+        }
 
+        // Small open-corner tracker inspired by machine-vision / terminal overlays.
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${frameAlpha})`;
+        ctx.lineWidth = Math.max(0.65, (isLiveTarget ? 0.95 : 0.72) * scale);
         ctx.beginPath();
-        ctx.arc(px, py, r + 3.5 * scale, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${isTarget ? 0.92 : 0.52})`;
-        ctx.lineWidth = Math.max(0.8, 1.05 * scale);
+        ctx.moveTo(sx - half, sy - half + corner); ctx.lineTo(sx - half, sy - half); ctx.lineTo(sx - half + corner, sy - half);
+        ctx.moveTo(sx + half - corner, sy - half); ctx.lineTo(sx + half, sy - half); ctx.lineTo(sx + half, sy - half + corner);
+        ctx.moveTo(sx - half, sy + half - corner); ctx.lineTo(sx - half, sy + half); ctx.lineTo(sx - half + corner, sy + half);
+        ctx.moveTo(sx + half - corner, sy + half); ctx.lineTo(sx + half, sy + half); ctx.lineTo(sx + half, sy + half - corner);
         ctx.stroke();
 
+        // Keep the red landmark compact; only the active pair receives a restrained glow.
+        if (hand.state === 'ACTIVE' && isTarget) {
+          const glow = ctx.createRadialGradient(px, py, 0, px, py, 14 * scale);
+          glow.addColorStop(0, `rgba(${SIGNAL_RED_RGB}, 0.28)`);
+          glow.addColorStop(1, `rgba(${SIGNAL_RED_RGB}, 0)`);
+          ctx.fillStyle = glow;
+          ctx.fillRect(px - 14 * scale, py - 14 * scale, 28 * scale, 28 * scale);
+        }
         ctx.beginPath();
-        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.arc(px, py, Math.min(r, isLiveTarget ? 4.3 * scale : 3.2 * scale), 0, Math.PI * 2);
         ctx.fillStyle = SIGNAL_RED;
         ctx.fill();
 
-        if (tip.name === 'thumb') {
-          ctx.font = `500 ${Math.round(8 * scale)}px 'JetBrains Mono', monospace`;
-          ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.82)`;
+        // Only the selected finger gets a coordinate chip: two tiny terminal cells,
+        // placed opposite the large floating word so both remain readable.
+        if (hand.activeFinger === tip.name && hand.state !== 'IDLE') {
+          const code = `${handKey === 'left' ? 'L' : 'R'}${['thumb', 'index', 'middle', 'ring', 'pinky'].indexOf(tip.name)}`;
+          const coords = `${(tip.pt.x * 100).toFixed(1)},${(tip.pt.y * 100).toFixed(1)}`;
+          const fontPx = Math.max(7, Math.round(7.5 * scale));
+          ctx.font = `500 ${fontPx}px 'JetBrains Mono', monospace`;
           ctx.textBaseline = 'middle';
-          ctx.fillText('T', px + 13 * scale, py);
+          const padX = 4 * scale;
+          const cellH = 13 * scale;
+          const codeW = ctx.measureText(code).width + padX * 2;
+          const coordW = ctx.measureText(coords).width + padX * 2;
+          const chipX = handKey === 'left' ? sx - half - coordW - 5 * scale : sx + half + 5 * scale;
+          const chipY = sy + half + 4 * scale;
+
+          ctx.fillStyle = 'rgba(7, 9, 11, 0.76)';
+          ctx.fillRect(chipX, chipY, coordW, cellH);
+          const codeX = handKey === 'left' ? chipX + coordW - codeW : chipX;
+          ctx.fillStyle = 'rgba(7, 9, 11, 0.86)';
+          ctx.fillRect(codeX, chipY - cellH, codeW, cellH - 1);
+          ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.34)`;
+          ctx.lineWidth = Math.max(0.5, 0.6 * scale);
+          ctx.strokeRect(chipX + 0.5, chipY + 0.5, coordW - 1, cellH - 1);
+          ctx.strokeRect(codeX + 0.5, chipY - cellH + 0.5, codeW - 1, cellH - 2);
+          ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.76)`;
+          ctx.fillText(coords, chipX + padX, chipY + cellH / 2);
+          ctx.fillText(code, codeX + padX, chipY - cellH / 2);
         }
         ctx.restore();
       }
