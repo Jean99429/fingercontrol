@@ -45,10 +45,10 @@ const TRACK_LIME_RGB = '215, 255, 63';
 const SIGNAL_RED = '#ff2b20';
 const SIGNAL_RED_RGB = '255, 43, 32';
 const DATA_COLORS: Array<[number, number, number]> = [
-  [91, 226, 255],
-  [255, 91, 194],
-  [137, 255, 101],
-  [255, 225, 72],
+  [84, 245, 138],  // index — fluorescent green
+  [85, 223, 255],  // middle — cyan blue
+  [255, 85, 190],  // ring — hot pink
+  [242, 237, 99],  // pinky — lemon yellow
 ];
 
 function dataColor(phase: number, alpha: number = 1): string {
@@ -565,8 +565,8 @@ export class VisualRenderer {
       const text = item.text.trim();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
       const handCode = item.hand === 'left' ? 'L' : 'R';
-      const accentSeed = Array.from(item.id).reduce((total, char) => total + char.charCodeAt(0), 0);
-      const accentPhase = (accentSeed % DATA_COLORS.length) / DATA_COLORS.length;
+      const fingerColorIndex = Math.max(0, ['INDEX', 'MIDDLE', 'RING', 'PINKY'].indexOf(finger));
+      const accentPhase = fingerColorIndex / DATA_COLORS.length;
 
       const fontSize = Math.round(44 * scale);
       ctx.font = `500 ${fontSize}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
@@ -635,7 +635,7 @@ export class VisualRenderer {
       const plateHeight = fontSize * 1.18;
       ctx.fillStyle = dataColor(accentPhase, 0.86);
       ctx.fillRect(drawX - platePadX, plateTop, visibleTextW + platePadX * 2, plateHeight);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.46)';
+      ctx.strokeStyle = 'rgba(4, 6, 8, 0.3)';
       ctx.lineWidth = Math.max(0.7, 0.9 * scale);
       ctx.strokeRect(drawX - platePadX + 0.5, plateTop + 0.5, visibleTextW + platePadX * 2 - 1, plateHeight - 1);
 
@@ -645,15 +645,15 @@ export class VisualRenderer {
       drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 0, true);
       ctx.shadowBlur = 0;
 
-      // A short white registration trace continues beyond the colour plate.
+      // A short matching registration trace continues beyond the colour plate.
       const lineY = drawY + 9 * scale;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+      ctx.strokeStyle = dataColor(accentPhase, 0.92);
       ctx.lineWidth = Math.max(0.8, 1 * scale);
       ctx.beginPath();
       ctx.moveTo(drawX, lineY);
       ctx.lineTo(drawX + textW * easeOut * 0.72, lineY);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+      ctx.fillStyle = dataColor(accentPhase, 1);
       ctx.fillRect(drawX - 2 * scale, lineY - 2 * scale, 4 * scale, 4 * scale);
 
       // Compact translucent data cell with white code text.
