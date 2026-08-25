@@ -312,16 +312,6 @@ export class SpeechEngine {
     }
     this.lastSpoke.set(slotId, now);
 
-    // Cancel prior speech safely
-    try {
-      window.speechSynthesis.cancel();
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    } catch (e) {
-      console.warn('SpeechSynthesis cancel error:', e);
-    }
-
     // Retrieve assigned human voice config
     let config = this.voiceAssignments.get(slotId);
     if (!config) {
@@ -335,51 +325,51 @@ export class SpeechEngine {
       };
     }
 
-    // Small micro-delay prevents Chrome bug where cancel() immediately cancels a synchronous speak()
-    setTimeout(() => {
-      try {
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'en-US';
-
-        const liveVoice = this.resolveLiveVoice(config.voiceName);
-        if (liveVoice) {
-          utterance.voice = liveVoice;
-          if (liveVoice.lang) {
-            utterance.lang = liveVoice.lang;
-          }
-        }
-
-        utterance.pitch = config.pitch;
-        utterance.rate = config.rate;
-        utterance.volume = 1.0;
-
-        // Keep reference in Set to prevent Chrome Garbage Collection mid-speech
-        this.activeUtterances.add(utterance);
-
-        utterance.onend = () => {
-          this.activeUtterances.delete(utterance);
-        };
-
-        utterance.onerror = () => {
-          this.activeUtterances.delete(utterance);
-        };
-
-        window.speechSynthesis.speak(utterance);
-
-        // Resume check for Safari / Chrome background throttling
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-      } catch (err) {
-        console.warn('Speech speak error:', err);
+    try {
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
       }
-    }, 10);
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+
+      const liveVoice = this.resolveLiveVoice(config.voiceName);
+      if (liveVoice) {
+        utterance.voice = liveVoice;
+        if (liveVoice.lang) {
+          utterance.lang = liveVoice.lang;
+        }
+      }
+
+      utterance.pitch = config.pitch;
+      utterance.rate = config.rate;
+      utterance.volume = 1.0;
+
+      this.activeUtterances.add(utterance);
+
+      utterance.onend = () => {
+        this.activeUtterances.delete(utterance);
+      };
+
+      utterance.onerror = () => {
+        this.activeUtterances.delete(utterance);
+      };
+
+      window.speechSynthesis.speak(utterance);
+
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+    } catch (err) {
+      console.warn('Speech speak error:', err);
+    }
 
     return true;
+  }
+
+  public resetForPlayback(): void {
+    this.stop();
+    this.lastSpoke.clear();
   }
 
   /**

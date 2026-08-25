@@ -493,6 +493,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       hiddenVideoRef.current.pause();
       setIsPlaying(false);
     } else {
+      speechEngine.resetForPlayback();
       await speechEngine.unlockSpeech();
       if (hiddenVideoRef.current.currentTime >= hiddenVideoRef.current.duration - 0.05) {
         hiddenVideoRef.current.currentTime = 0;

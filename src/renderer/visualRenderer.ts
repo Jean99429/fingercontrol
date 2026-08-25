@@ -201,12 +201,11 @@ export class VisualRenderer {
     const scale = Math.max(0.6, refDim / 1080);
 
     const normalRadius = Math.max(6.2, 7 * scale);
-    const approachingRadius = Math.max(7.4, 8.2 * scale);
     const activeRadius = Math.max(8.8, 10 * scale);
 
     for (const handKey of ['left', 'right'] as const) {
       const hand = gestureData[handKey];
-      if (!hand.detected) {
+      if (!hand.detected || hand.state !== 'ACTIVE' || !hand.activeFinger) {
         this.smoothedBoxes[handKey].initialized = false;
         for (const tip of Object.values(this.smoothedTips[handKey])) tip.initialized = false;
         continue;
@@ -375,8 +374,8 @@ export class VisualRenderer {
         ctx.restore();
       }
 
-      // 2. Proximity line when approaching, arming, or active
-      if (hand.state === 'APPROACHING' || hand.state === 'ARMING' || hand.state === 'ACTIVE') {
+      // 2. Pinch connection, visible only while the word is active.
+      {
         const targetTip = hand.activeFinger ? ft[hand.activeFinger] : null;
         if (targetTip) {
           const thumbX = ft.thumb.x * width;
@@ -388,13 +387,13 @@ export class VisualRenderer {
           ctx.beginPath();
           ctx.moveTo(thumbX, thumbY);
           ctx.lineTo(targetX, targetY);
-          ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${hand.state === 'ACTIVE' ? 0.94 : 0.64})`;
-          ctx.lineWidth = hand.state === 'ACTIVE' ? 1.8 * scale : 1.05 * scale;
-          ctx.setLineDash(hand.state === 'ACTIVE' ? [2 * scale, 3 * scale] : [4 * scale, 4 * scale]);
+          ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, 0.94)`;
+          ctx.lineWidth = 1.8 * scale;
+          ctx.setLineDash([2 * scale, 3 * scale]);
           ctx.stroke();
 
           // Signal packets move along the pinch connection.
-          const packetCount = hand.state === 'ACTIVE' ? 3 : 1;
+          const packetCount = 3;
           for (let i = 0; i < packetCount; i++) {
             const phase = (performance.now() / 700 + i / packetCount) % 1;
             const packetX = thumbX + (targetX - thumbX) * phase;
@@ -424,10 +423,8 @@ export class VisualRenderer {
         let r = normalRadius;
         const isTarget = hand.activeFinger === tip.name || tip.name === 'thumb';
 
-        if (hand.state === 'ACTIVE' && isTarget) {
+        if (isTarget) {
           r = activeRadius;
-        } else if ((hand.state === 'ARMING' || hand.state === 'APPROACHING') && isTarget) {
-          r = approachingRadius;
         }
 
         const tracker = this.smoothedTips[handKey][tip.name];
@@ -439,8 +436,8 @@ export class VisualRenderer {
 
         const sx = tracker.x;
         const sy = tracker.y;
-        const isLiveTarget = isTarget && hand.state !== 'IDLE';
-        const half = Math.max(19, (isLiveTarget ? (hand.state === 'ACTIVE' ? 27 : 24) : 21) * scale);
+        const isLiveTarget = isTarget;
+        const half = Math.max(19, (isLiveTarget ? 27 : 21) * scale);
         const corner = Math.min(half * 0.4, 9 * scale);
         const frameAlpha = isLiveTarget ? 1 : 0.88;
 
