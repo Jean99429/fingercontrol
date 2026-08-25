@@ -308,6 +308,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       speechEngine.stop();
       triggeredEventIdsRef.current.clear();
       visualRenderer.reset();
+      await speechEngine.prepare(config.slots);
 
       const canvasStream = canvas.captureStream(30);
       const exportTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];

@@ -40,10 +40,10 @@ const createTipTrackers = (): Record<TipName, SmoothPoint> => ({
   pinky: { x: 0, y: 0, initialized: false },
 });
 
-const TRACK_LIME = '#d7ff3f';
-const TRACK_LIME_RGB = '215, 255, 63';
-const SIGNAL_RED = '#ff2b20';
-const SIGNAL_RED_RGB = '255, 43, 32';
+const TRACK_LIME = '#ffffff';
+const TRACK_LIME_RGB = '255, 255, 255';
+const SIGNAL_RED = '#E60340';
+const SIGNAL_RED_RGB = '230, 3, 64';
 const DATA_COLORS: Array<[number, number, number]> = [
   [46, 217, 255],  // #2ED9FF
   [141, 164, 255], // #8DA4FF
@@ -622,7 +622,7 @@ export class VisualRenderer {
       const platePadX = 10 * scale;
       const plateTop = drawY - fontSize * 0.9;
       const plateHeight = fontSize * 1.18;
-      ctx.fillStyle = dataColor(accentPhase, 0.86);
+      ctx.fillStyle = 'rgba(230, 3, 64, 0.92)';
       ctx.fillRect(drawX - platePadX, plateTop, visibleTextW + platePadX * 2, plateHeight);
       ctx.strokeStyle = 'rgba(4, 6, 8, 0.3)';
       ctx.lineWidth = Math.max(0.7, 0.9 * scale);
