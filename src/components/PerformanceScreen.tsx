@@ -454,6 +454,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
         // Check active events at this timestamp
         for (const ev of gestureEvents) {
+          if (ev.releaseTime - ev.startTime < 0.12) continue;
           const isActive = vTime >= ev.startTime && vTime <= ev.releaseTime;
           const slotId = `${ev.hand}-${ev.finger}`;
 

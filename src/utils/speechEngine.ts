@@ -66,12 +66,13 @@ export class SpeechEngine {
     void this.loadModel();
   }
 
-  private speakSystem(text: string, slotIndex: number): void {
-    if (!('speechSynthesis' in window)) return;
+  private speakSystem(text: string, slotIndex: number): boolean {
+    if (!('speechSynthesis' in window)) return false;
     const femaleNames = ['Samantha', 'Karen', 'Moira', 'Tessa', 'Victoria', 'Ava'];
     const maleNames = ['Alex', 'Daniel', 'Aaron', 'Fred', 'Tom', 'Arthur', 'Oliver'];
     const wanted = slotIndex % 2 === 0 ? femaleNames : maleNames;
     const voices = window.speechSynthesis.getVoices().filter((voice) => /^en/i.test(voice.lang));
+    if (voices.length === 0) return false;
     const voice = wanted
       .map((name) => voices.find((candidate) => candidate.name.toLowerCase().startsWith(name.toLowerCase())))
       .find(Boolean) || voices[slotIndex % Math.max(1, voices.length)];
@@ -83,6 +84,7 @@ export class SpeechEngine {
     utterance.volume = 1;
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
+    return true;
   }
 
   public updateVoiceAssignments(slots: ContentSlot[]): void {
@@ -160,8 +162,7 @@ export class SpeechEngine {
     // Preview and setup always mirror the reference site's immediate system
     // voices. Neural buffers are reserved for the downloadable video mix.
     if (!this.useNeuralAudio) {
-      this.speakSystem(text, slotIndex);
-      return true;
+      if (this.speakSystem(text, slotIndex)) return true;
     }
 
     void (async () => {

@@ -1036,7 +1036,12 @@ export class GestureRecognizerManager {
       if (ev) ev.releaseTime = analysisDuration;
     }
 
-    return { events, frames, alignment: coordinateMapping };
+    // One- or two-frame finger classifications are tracking noise, not an
+    // intentional pinch. Removing them prevents a wrong word from flashing
+    // immediately before the stable event (for example HI before WELCOME).
+    const stableEvents = events.filter((event) => event.releaseTime - event.startTime >= 0.12);
+
+    return { events: stableEvents, frames, alignment: coordinateMapping };
   }
 
   public async analyzeVideo(
