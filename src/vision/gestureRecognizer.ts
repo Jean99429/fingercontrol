@@ -83,6 +83,11 @@ export class GestureRecognizerManager {
     right: null,
   };
 
+  private fingerCandidateHistory: Record<Hand, Finger[]> = {
+    left: [],
+    right: [],
+  };
+
   // Two-hand heart gesture tracking
   private heartGestureStartTime: number = 0;
   private heartGestureActive: boolean = false;
@@ -181,6 +186,7 @@ export class GestureRecognizerManager {
     this.heartGestureStartTime = 0;
     this.heartGestureActive = false;
     this.lastKnownLandmarks = { left: null, right: null };
+    this.fingerCandidateHistory = { left: [], right: [] };
     for (const hand of ['left', 'right'] as Hand[]) {
       const s = this.states[hand];
       if (s.state === 'ACTIVE' && s.activeFinger && this.onReleaseCallback) {
@@ -697,11 +703,37 @@ export class GestureRecognizerManager {
 
           const handState = this.states[handType];
           const prevPinch = handState.isPinching;
-          const currentPinch = nearest.dist < (prevPinch ? pinchOffThreshold : pinchOnThreshold);
+          const candidateHistory = this.fingerCandidateHistory[handType];
+
+          if (!prevPinch) {
+            if (nearest.dist < 0.95) {
+              candidateHistory.push(nearest.finger);
+              if (candidateHistory.length > 5) candidateHistory.shift();
+            } else {
+              candidateHistory.length = 0;
+            }
+          }
+
+          let selectedFinger = handState.activeFinger || nearest.finger;
+          if (!prevPinch && candidateHistory.length > 0) {
+            const counts = new Map<Finger, number>();
+            for (const candidate of candidateHistory) {
+              counts.set(candidate, (counts.get(candidate) || 0) + 1);
+            }
+            selectedFinger = [...candidateHistory]
+              .reverse()
+              .reduce((best, candidate) =>
+                (counts.get(candidate) || 0) > (counts.get(best) || 0) ? candidate : best
+              );
+          }
+
+          let selected = fingerDists.find((entry) => entry.finger === selectedFinger) || nearest;
+          if (!prevPinch && selected.dist > pinchOnThreshold + 0.08) selected = nearest;
+          const currentPinch = selected.dist < (prevPinch ? pinchOffThreshold : pinchOnThreshold);
 
           const midPoint: FingertipPoint = {
-            x: (thumbTip.x + nearest.tip.x) / 2,
-            y: (thumbTip.y + nearest.tip.y) / 2,
+            x: (thumbTip.x + selected.tip.x) / 2,
+            y: (thumbTip.y + selected.tip.y) / 2,
           };
 
           let currentState: GestureState = handState.state;
@@ -710,12 +742,12 @@ export class GestureRecognizerManager {
           if (!prevPinch && currentPinch) {
             handState.isPinching = true;
             currentState = 'ACTIVE';
-            activeFinger = nearest.finger;
+            activeFinger = selected.finger;
             handState.pinchStartPos = midPoint;
             handState.triggerTimestamp = now;
 
             if (this.onTriggerCallback) {
-              this.onTriggerCallback(handType, nearest.finger, midPoint, now);
+              this.onTriggerCallback(handType, selected.finger, midPoint, now);
             }
           } else if (prevPinch && !currentPinch) {
             handState.isPinching = false;
@@ -725,9 +757,10 @@ export class GestureRecognizerManager {
             }
             activeFinger = null;
             handState.pinchStartPos = null;
+            candidateHistory.length = 0;
           } else if (currentPinch) {
             currentState = 'ACTIVE';
-            activeFinger = handState.activeFinger || nearest.finger;
+            activeFinger = handState.activeFinger || selected.finger;
           } else {
             currentState = nearest.dist < 0.88 ? 'APPROACHING' : 'IDLE';
             activeFinger = null;
@@ -756,7 +789,7 @@ export class GestureRecognizerManager {
             },
             state: currentState,
             activeFinger,
-            proximityDistance: nearest.dist,
+            proximityDistance: selected.dist,
             pinchCenter: midPoint,
             dragOffset: { dx, dy },
             holdDurationMs: 0,
