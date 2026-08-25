@@ -847,10 +847,11 @@ export class GestureRecognizerManager {
     const displayDuration = rawDisplayDuration && isFinite(rawDisplayDuration) && rawDisplayDuration > 0
       ? rawDisplayDuration
       : trackingDuration;
-    const displayTimeScale = displayDuration / trackingDuration;
-
     const fps = 30;
-    const totalFrames = Math.max(1, Math.floor(trackingDuration * fps));
+    // Tracking and display share the same absolute timeline. The tracking
+    // video is only a spatial landmark source; never stretch its timestamps.
+    const analysisDuration = Math.min(trackingDuration, displayDuration);
+    const totalFrames = Math.max(1, Math.floor(analysisDuration * fps));
     const events: GestureEvent[] = [];
     const frames: VideoAnalysisFrame[] = [];
 
@@ -903,7 +904,7 @@ export class GestureRecognizerManager {
 
     for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
       const currentTime = frameIndex / fps;
-      const displayTime = Math.min(displayDuration, currentTime * displayTimeScale);
+      const displayTime = currentTime;
       videoElement.currentTime = currentTime;
 
       await new Promise<void>((resolve) => {
@@ -978,7 +979,7 @@ export class GestureRecognizerManager {
       const evId = activeEventId[hand];
       if (!evId) continue;
       const ev = events.find((candidate) => candidate.id === evId);
-      if (ev) ev.releaseTime = displayDuration;
+      if (ev) ev.releaseTime = analysisDuration;
     }
 
     return { events, frames, alignment: coordinateMapping };
