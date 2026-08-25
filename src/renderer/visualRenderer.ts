@@ -56,9 +56,15 @@ export class VisualRenderer {
     const existing = this.floatingTexts.get(slotId);
     if (existing) {
       existing.text = text;
+      existing.hand = hand;
+      existing.x = px;
+      existing.y = py;
       existing.targetX = px;
       existing.targetY = py;
+      existing.vx = 0;
+      existing.vy = 0;
       existing.active = true;
+      existing.spawnTime = performance.now();
       existing.releaseTime = 0;
       existing.alpha = 1.0;
     } else {
@@ -150,14 +156,15 @@ export class VisualRenderer {
     height: number,
     gestureData: { left: HandGestureData; right: HandGestureData }
   ): void {
-    // Base scale relative to 1080p (SPEC Section 8.1)
+    // Resolution-independent measurement system, tuned around a 1080px short edge.
     const refDim = Math.min(width, height);
     const scale = Math.max(0.6, refDim / 1080);
 
-    const normalRadius = 7 * scale;
-    const approachingRadius = 9 * scale;
-    const activeRadius = 12 * scale;
-    const RED = '#FF0000';
+    const normalRadius = 4.5 * scale;
+    const approachingRadius = 6 * scale;
+    const activeRadius = 8 * scale;
+    const SIGNAL_RED = '#ff1f18';
+    const SIGNAL_RED_RGB = '255, 31, 24';
 
     for (const handKey of ['left', 'right'] as const) {
       const hand = gestureData[handKey];
@@ -171,16 +178,34 @@ export class VisualRenderer {
       // 1. Coordinate Frame (SPEC Section 8.2)
       if (hand.boundingBox) {
         const rawBox = hand.boundingBox;
-        // Expand bounding box by ~18%
+        // Convert the MediaPipe bounds to a generous square tracking field. The
+        // square reads as a live coordinate viewport instead of a UI card.
         const boxW = rawBox.maxX - rawBox.minX;
         const boxH = rawBox.maxY - rawBox.minY;
-        const padX = Math.max(boxW * 0.18, 0.04);
-        const padY = Math.max(boxH * 0.18, 0.04);
+        const centerX = (rawBox.minX + rawBox.maxX) / 2;
+        const centerY = (rawBox.minY + rawBox.maxY) / 2;
+        const squareSize = Math.min(0.58, Math.max(0.19, Math.max(boxW, boxH) * 1.42));
+        let targetMinX = centerX - squareSize / 2;
+        let targetMinY = centerY - squareSize / 2;
+        let targetMaxX = centerX + squareSize / 2;
+        let targetMaxY = centerY + squareSize / 2;
 
-        const targetMinX = Math.max(0, rawBox.minX - padX);
-        const targetMinY = Math.max(0, rawBox.minY - padY);
-        const targetMaxX = Math.min(1, rawBox.maxX + padX);
-        const targetMaxY = Math.min(1, rawBox.maxY + padY);
+        if (targetMinX < 0.018) {
+          targetMaxX += 0.018 - targetMinX;
+          targetMinX = 0.018;
+        }
+        if (targetMaxX > 0.982) {
+          targetMinX -= targetMaxX - 0.982;
+          targetMaxX = 0.982;
+        }
+        if (targetMinY < 0.024) {
+          targetMaxY += 0.024 - targetMinY;
+          targetMinY = 0.024;
+        }
+        if (targetMaxY > 0.976) {
+          targetMinY -= targetMaxY - 0.976;
+          targetMaxY = 0.976;
+        }
 
         const smooth = this.smoothedBoxes[handKey];
         if (!smooth.initialized) {
@@ -191,7 +216,7 @@ export class VisualRenderer {
           smooth.initialized = true;
         } else {
           // Lerp for smooth box motion
-          const lerpFactor = 0.35;
+          const lerpFactor = 0.24;
           smooth.minX += (targetMinX - smooth.minX) * lerpFactor;
           smooth.minY += (targetMinY - smooth.minY) * lerpFactor;
           smooth.maxX += (targetMaxX - smooth.maxX) * lerpFactor;
@@ -205,11 +230,27 @@ export class VisualRenderer {
         const bw = x2 - x1;
         const bh = y2 - y1;
 
-        // Draw 4 corner brackets
-        const cornerLen = Math.min(bw * 0.22, bh * 0.22, 28 * scale);
+        // Faint field + strong open corners. Thin lines and small data labels are
+        // intentionally closer to a TouchDesigner viewport than a bounding box.
+        const cornerLen = Math.min(bw * 0.16, bh * 0.16, 34 * scale);
         ctx.save();
-        ctx.strokeStyle = RED;
-        ctx.lineWidth = Math.max(2, 2.5 * scale);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.18)`;
+        ctx.lineWidth = Math.max(0.75, 1 * scale);
+        ctx.strokeRect(x1 + 0.5, y1 + 0.5, bw - 1, bh - 1);
+
+        // Local axes and quarter divisions.
+        ctx.setLineDash([1.5 * scale, 7 * scale]);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1 + bh / 2);
+        ctx.lineTo(x2, y1 + bh / 2);
+        ctx.moveTo(x1 + bw / 2, y1);
+        ctx.lineTo(x1 + bw / 2, y2);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.13)`;
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.strokeStyle = SIGNAL_RED;
+        ctx.lineWidth = Math.max(1.25, 1.55 * scale);
         ctx.lineCap = 'square';
         ctx.lineJoin = 'miter';
 
@@ -241,12 +282,35 @@ export class VisualRenderer {
         ctx.lineTo(x2, y2 - cornerLen);
         ctx.stroke();
 
-        // Hand Label: L or R
-        ctx.font = `700 ${Math.round(13 * scale)}px 'JetBrains Mono', monospace`;
-        ctx.fillStyle = RED;
+        // Measurement ticks on all four axes.
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.72)`;
+        ctx.lineWidth = Math.max(0.8, 1 * scale);
+        for (let i = 1; i < 4; i++) {
+          const tx = x1 + (bw * i) / 4;
+          const ty = y1 + (bh * i) / 4;
+          const tick = (i === 2 ? 7 : 4) * scale;
+          ctx.beginPath();
+          ctx.moveTo(tx, y1 - tick);
+          ctx.lineTo(tx, y1 + tick);
+          ctx.moveTo(tx, y2 - tick);
+          ctx.lineTo(tx, y2 + tick);
+          ctx.moveTo(x1 - tick, ty);
+          ctx.lineTo(x1 + tick, ty);
+          ctx.moveTo(x2 - tick, ty);
+          ctx.lineTo(x2 + tick, ty);
+          ctx.stroke();
+        }
+
+        // Hand channel and normalized coordinates.
+        ctx.font = `500 ${Math.round(10 * scale)}px 'JetBrains Mono', monospace`;
+        ctx.fillStyle = SIGNAL_RED;
         ctx.textBaseline = 'top';
-        const labelText = handKey === 'left' ? 'L' : 'R';
-        ctx.fillText(labelText, x1 + 6 * scale, y1 + 6 * scale);
+        const channel = handKey === 'left' ? 'CH/L' : 'CH/R';
+        ctx.fillText(`${channel}  TRACK`, x1 + 8 * scale, y1 + 7 * scale);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.72)`;
+        ctx.fillText(`${centerX.toFixed(3)} : ${centerY.toFixed(3)}`, x2 - 8 * scale, y1 + 7 * scale);
+        ctx.textAlign = 'left';
 
         // Crosshair at pinch center (or hand center if not pinching)
         const crossCenter = hand.pinchCenter || { x: (smooth.minX + smooth.maxX) / 2, y: (smooth.minY + smooth.maxY) / 2 };
@@ -254,8 +318,8 @@ export class VisualRenderer {
         const cy = crossCenter.y * height;
         const crossSize = 10 * scale;
 
-        ctx.strokeStyle = 'rgba(255, 0, 0, 0.75)';
-        ctx.lineWidth = Math.max(1.5, 1.8 * scale);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.62)`;
+        ctx.lineWidth = Math.max(0.8, 1 * scale);
         ctx.beginPath();
         ctx.moveTo(cx - crossSize, cy);
         ctx.lineTo(cx + crossSize, cy);
@@ -279,12 +343,22 @@ export class VisualRenderer {
           ctx.beginPath();
           ctx.moveTo(thumbX, thumbY);
           ctx.lineTo(targetX, targetY);
-          ctx.strokeStyle = RED;
-          ctx.lineWidth = hand.state === 'ACTIVE' ? 3 * scale : 1.8 * scale;
+          ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${hand.state === 'ACTIVE' ? 0.94 : 0.58})`;
+          ctx.lineWidth = hand.state === 'ACTIVE' ? 1.8 * scale : 1.05 * scale;
           if (hand.state === 'ARMING') {
             ctx.setLineDash([4 * scale, 3 * scale]);
           }
           ctx.stroke();
+
+          // Signal packets move along the pinch connection.
+          const packetCount = hand.state === 'ACTIVE' ? 3 : 1;
+          for (let i = 0; i < packetCount; i++) {
+            const phase = (performance.now() / 700 + i / packetCount) % 1;
+            const packetX = thumbX + (targetX - thumbX) * phase;
+            const packetY = thumbY + (targetY - thumbY) * phase;
+            ctx.fillStyle = SIGNAL_RED;
+            ctx.fillRect(packetX - 1.5 * scale, packetY - 1.5 * scale, 3 * scale, 3 * scale);
+          }
           ctx.restore();
         }
       }
@@ -312,10 +386,34 @@ export class VisualRenderer {
         }
 
         ctx.save();
+
+        // Soft signal halo keeps the landmarks legible on dithered/ASCII video.
+        const haloRadius = r + (hand.state === 'ACTIVE' && isTarget ? 10 : 6) * scale;
+        const gradient = ctx.createRadialGradient(px, py, 0, px, py, haloRadius);
+        gradient.addColorStop(0, `rgba(${SIGNAL_RED_RGB}, ${hand.state === 'ACTIVE' && isTarget ? 0.34 : 0.2})`);
+        gradient.addColorStop(1, `rgba(${SIGNAL_RED_RGB}, 0)`);
+        ctx.beginPath();
+        ctx.arc(px, py, haloRadius, 0, Math.PI * 2);
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(px, py, r + 3.5 * scale, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${isTarget ? 0.92 : 0.52})`;
+        ctx.lineWidth = Math.max(0.8, 1.05 * scale);
+        ctx.stroke();
+
         ctx.beginPath();
         ctx.arc(px, py, r, 0, Math.PI * 2);
-        ctx.fillStyle = RED;
+        ctx.fillStyle = SIGNAL_RED;
         ctx.fill();
+
+        if (tip.name === 'thumb') {
+          ctx.font = `500 ${Math.round(8 * scale)}px 'JetBrains Mono', monospace`;
+          ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.82)`;
+          ctx.textBaseline = 'middle';
+          ctx.fillText('T', px + 13 * scale, py);
+        }
         ctx.restore();
       }
     }
@@ -355,35 +453,62 @@ export class VisualRenderer {
       }
 
       ctx.save();
-      const fontSize = Math.round(24 * scale);
-      ctx.font = `700 ${fontSize}px 'JetBrains Mono', monospace`;
-      ctx.textBaseline = 'middle';
+      const age = Math.max(0, now - item.spawnTime);
+      const reveal = Math.min(1, age / 220);
+      const easeOut = 1 - Math.pow(1 - reveal, 3);
+      const text = item.text.toUpperCase();
+      const finger = item.id.split('-').slice(1).join('/').toUpperCase();
+      const handCode = item.hand === 'left' ? 'L' : 'R';
+      const SIGNAL_RED_RGB = '255, 31, 24';
 
-      const text = item.text;
+      const fontSize = Math.round(42 * scale);
+      ctx.font = `600 ${fontSize}px 'Space Grotesk', 'JetBrains Mono', sans-serif`;
       const metrics = ctx.measureText(text);
-      const paddingH = 14 * scale;
-      const boxW = metrics.width + paddingH * 2;
-      const boxH = 40 * scale;
-      const drawX = item.x + 20 * scale;
-      const drawY = item.y - boxH / 2;
+      const textW = metrics.width;
+      const side = item.hand === 'left' ? 1 : -1;
+      let drawX = item.x + side * 34 * scale;
+      const drawY = item.y - 8 * scale - (1 - easeOut) * 16 * scale;
 
-      // Dark translucent backing
-      ctx.fillStyle = `rgba(7, 17, 31, ${item.alpha * 0.85})`;
-      ctx.fillRect(drawX, drawY, boxW, boxH);
+      if (side < 0) drawX -= textW;
+      drawX = Math.max(24 * scale, Math.min(width - textW - 24 * scale, drawX));
 
-      // Red corner brackets / accent
-      ctx.strokeStyle = `rgba(255, 0, 0, ${item.alpha * 0.9})`;
-      ctx.lineWidth = 1.5 * scale;
-      ctx.strokeRect(drawX, drawY, boxW, boxH);
+      // Trigger pulse at the actual pinch point.
+      if (age < 520) {
+        const pulse = age / 520;
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, (12 + pulse * 34) * scale, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, ${(1 - pulse) * 0.7 * item.alpha})`;
+        ctx.lineWidth = Math.max(0.8, 1.2 * scale);
+        ctx.stroke();
+      }
 
-      // White text
-      ctx.fillStyle = `rgba(255, 255, 255, ${item.alpha})`;
-      ctx.fillText(text, drawX + paddingH, item.y);
+      ctx.globalAlpha = item.alpha * easeOut;
+      ctx.textBaseline = 'alphabetic';
 
-      // Small hand indicator
-      ctx.font = `600 ${Math.round(10 * scale)}px 'JetBrains Mono', monospace`;
-      ctx.fillStyle = `rgba(255, 0, 0, ${item.alpha * 0.9})`;
-      ctx.fillText(`PINCH:${item.hand.toUpperCase()}`, drawX + paddingH, drawY - 6 * scale);
+      // A restrained chromatic echo replaces the old heavy text card.
+      ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.72)`;
+      ctx.fillText(text, drawX + 2.5 * scale, drawY + 2 * scale);
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+      ctx.shadowBlur = 10 * scale;
+      ctx.fillStyle = 'rgba(245, 247, 244, 0.98)';
+      ctx.fillText(text, drawX, drawY);
+      ctx.shadowBlur = 0;
+
+      // Baseline behaves like a signal trace, not a container.
+      const lineY = drawY + 9 * scale;
+      ctx.strokeStyle = `rgba(${SIGNAL_RED_RGB}, 0.88)`;
+      ctx.lineWidth = Math.max(0.9, 1.15 * scale);
+      ctx.beginPath();
+      ctx.moveTo(drawX, lineY);
+      ctx.lineTo(drawX + textW * easeOut, lineY);
+      ctx.stroke();
+      ctx.fillStyle = '#ff1f18';
+      ctx.fillRect(drawX - 3 * scale, lineY - 2 * scale, 4 * scale, 4 * scale);
+
+      // Compact channel metadata, deliberately small and quiet.
+      ctx.font = `500 ${Math.round(9 * scale)}px 'JetBrains Mono', monospace`;
+      ctx.fillStyle = `rgba(${SIGNAL_RED_RGB}, 0.92)`;
+      ctx.fillText(`${handCode}/${finger}  ·  TRIGGER`, drawX, drawY - (fontSize + 8 * scale));
 
       ctx.restore();
     });
