@@ -318,6 +318,11 @@ export const SetupScreen: React.FC<SetupScreenProps> = ({
                     />
                     <span className="text-[#C5D1DE] text-xs uppercase">SHOW TRACKING</span>
                   </label>
+
+                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#0A1626] border border-[#1E2E42] text-[11px] text-[#A0AEC0]">
+                    <CheckCircle2 className="w-3 h-3 text-[#FF0000]" />
+                    <span className="uppercase text-[10px] tracking-wide">AUTO CRT & BORDER ALIGNMENT</span>
+                  </div>
                 </div>
 
                 {trackingMismatch && (

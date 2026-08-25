@@ -184,7 +184,20 @@ export const App: React.FC = () => {
         analysisVideo.onerror = () => reject(new Error('Failed to load video for analysis'));
       });
 
-      // 3. Perform frame-by-frame MediaPipe Hand Landmarker analysis
+      // If dual-track mode (both display and clean tracking video exist), load display video metadata to align boundaries
+      let displayVideoElement: HTMLVideoElement | null = null;
+      if (trackingVideoUrl && displayVideoUrl) {
+        displayVideoElement = document.createElement('video');
+        displayVideoElement.src = displayVideoUrl;
+        displayVideoElement.muted = true;
+        displayVideoElement.playsInline = true;
+        await new Promise<void>((resolve) => {
+          displayVideoElement!.onloadedmetadata = () => resolve();
+          displayVideoElement!.onerror = () => resolve(); // Non-fatal if metadata fails
+        });
+      }
+
+      // 3. Perform frame-by-frame MediaPipe Hand Landmarker analysis with 100% auto aspect & CRT frame alignment
       const result = await gestureRecognizer.analyzeVideo(
         analysisVideo,
         config.slots,
@@ -192,7 +205,8 @@ export const App: React.FC = () => {
         (progress, status) => {
           setAnalysisProgress(progress);
           setAnalysisStatus(status);
-        }
+        },
+        displayVideoElement
       );
 
       setGestureEvents(result.events);

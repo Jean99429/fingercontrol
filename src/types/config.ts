@@ -25,11 +25,24 @@ export interface GestureEvent {
   text: string;
 }
 
+export interface VideoAlignmentConfig {
+  autoDetectBorder: boolean;
+  scaleX: number; // 0.2 to 2.0 (default 1.0)
+  scaleY: number; // 0.2 to 2.0 (default 1.0)
+  offsetX: number; // -0.5 to 0.5 (default 0)
+  offsetY: number; // -0.5 to 0.5 (default 0)
+  cropLeft: number; // 0 to 0.4 (default 0)
+  cropRight: number; // 0 to 0.4 (default 0)
+  cropTop: number; // 0 to 0.4 (default 0)
+  cropBottom: number; // 0 to 0.4 (default 0)
+}
+
 export interface FingercontrolConfig {
   version: 2;
   mirroredVideo: boolean;
   trackingVisible: boolean;
   slots: ContentSlot[];
+  alignment?: VideoAlignmentConfig;
 }
 
 export interface FingertipPoint {
