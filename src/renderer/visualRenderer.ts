@@ -469,11 +469,6 @@ export class VisualRenderer {
         }
         ctx.beginPath();
         ctx.arc(px, py, r, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(8, 8, 10, 0.82)';
-        ctx.lineWidth = Math.max(1.2, 1.5 * scale);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(px, py, Math.max(5, r - 1.35 * scale), 0, Math.PI * 2);
         ctx.fillStyle = SIGNAL_RED;
         ctx.fill();
 
@@ -559,7 +554,6 @@ export class VisualRenderer {
       const easeOut = 1 - Math.pow(1 - reveal, 3);
       const text = item.text.trim().toUpperCase();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
-      const handCode = item.hand === 'left' ? 'L' : 'R';
       const baseFingerColorIndex = Math.max(0, ['INDEX', 'MIDDLE', 'RING', 'PINKY'].indexOf(finger));
       const fingerColorIndex = item.hand === 'left'
         ? baseFingerColorIndex
@@ -644,16 +638,6 @@ export class VisualRenderer {
       ctx.stroke();
       ctx.fillStyle = dataColor(accentPhase, 1);
       ctx.fillRect(drawX - 2 * scale, lineY - 2 * scale, 4 * scale, 4 * scale);
-
-      // Compact translucent data cell with white code text.
-      const metaText = `${handCode}/${finger} · VOICE`;
-      ctx.font = `500 ${Math.max(8, Math.round(9 * scale))}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
-      const metaW = ctx.measureText(metaText).width;
-      const metaY = drawY - (fontSize + 7 * scale);
-      ctx.fillStyle = dataColor(accentPhase, 0.48);
-      ctx.fillRect(drawX - 4 * scale, metaY - 10 * scale, metaW + 8 * scale, 14 * scale);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
-      ctx.fillText(metaText, drawX, metaY);
 
       ctx.restore();
     });
