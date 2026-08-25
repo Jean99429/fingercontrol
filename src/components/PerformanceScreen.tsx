@@ -73,6 +73,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const screenStreamRef = useRef<MediaStream | null>(null);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportStage, setExportStage] = useState<'idle' | 'preparing' | 'rendering'>('idle');
+  const [completedExport, setCompletedExport] = useState<{ url: string; fileName: string } | null>(null);
 
   // Selected event in timeline (for inspection or deletion)
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -311,6 +312,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       // as though the click was ignored.
       setIsExporting(true);
       setExportStage('preparing');
+      if (completedExport) {
+        URL.revokeObjectURL(completedExport.url);
+        setCompletedExport(null);
+      }
       speechEngine.stop();
       triggeredEventIdsRef.current.clear();
       visualRenderer.reset();
@@ -362,13 +367,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       recorder.onstop = () => {
         const blob = new Blob(recordedChunksRef.current, { type: mimeType });
         const url = URL.createObjectURL(blob);
+        const fileName = `fingercontrol-export-${Date.now()}.webm`;
+        setCompletedExport({ url, fileName });
         const link = document.createElement('a');
         link.href = url;
-        link.download = `fingercontrol-export-${Date.now()}.webm`;
+        link.download = fileName;
         document.body.appendChild(link);
         link.click();
         link.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         exportStream.getTracks().forEach((track) => track.stop());
         audioMixSources.forEach((source) => source.disconnect());
         audioMixDestination.stream.getTracks().forEach((track) => track.stop());
@@ -680,6 +686,16 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
               <Circle className="w-3.5 h-3.5 fill-current" />
               {isRecording ? `REC (${recordingSeconds}s)` : 'RECORD'}
             </button>
+          ) : completedExport ? (
+            <a
+              href={completedExport.url}
+              download={completedExport.fileName}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#E60340] hover:bg-[#c90236] text-white transition-colors shadow-sm cursor-pointer"
+              title="Save the completed processed video"
+            >
+              <Download className="w-3.5 h-3.5" />
+              SAVE VIDEO
+            </a>
           ) : (
             <button
               onClick={handleExportVideo}
