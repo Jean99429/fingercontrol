@@ -578,25 +578,46 @@ export class GestureRecognizerManager {
       // PROCESS DETECTED HANDS
       // ----------------------------------------------------
       if (detections && detections.landmarks && detections.landmarks.length > 0) {
+        let uploadHandAssignments: Hand[] | null = null;
+        if (coordinateMapping) {
+          const wrists = detections.landmarks.map((points) => ({
+            x: coordinateMapping.offsetX + (isMirrored ? 1 - points[0].x : points[0].x) * coordinateMapping.scaleX,
+            y: coordinateMapping.offsetY + points[0].y * coordinateMapping.scaleY,
+          }));
+          const previousLeft = this.lastKnownLandmarks.left?.landmarks[0];
+          const previousRight = this.lastKnownLandmarks.right?.landmarks[0];
+          const distance = (a: FingertipPoint, b: FingertipPoint) => Math.hypot(a.x - b.x, a.y - b.y);
+
+          if (wrists.length >= 2) {
+            if (previousLeft && previousRight) {
+              const direct = distance(wrists[0], previousLeft) + distance(wrists[1], previousRight);
+              const swapped = distance(wrists[0], previousRight) + distance(wrists[1], previousLeft);
+              uploadHandAssignments = direct <= swapped ? ['left', 'right'] : ['right', 'left'];
+            } else {
+              uploadHandAssignments = wrists[0].x <= wrists[1].x ? ['left', 'right'] : ['right', 'left'];
+            }
+          } else {
+            const wrist = wrists[0];
+            if (previousLeft && previousRight) {
+              uploadHandAssignments = [distance(wrist, previousLeft) <= distance(wrist, previousRight) ? 'left' : 'right'];
+            } else if (previousLeft && distance(wrist, previousLeft) < 0.35) {
+              uploadHandAssignments = ['left'];
+            } else if (previousRight && distance(wrist, previousRight) < 0.35) {
+              uploadHandAssignments = ['right'];
+            } else {
+              uploadHandAssignments = [wrist.x < 0.5 ? 'left' : 'right'];
+            }
+          }
+        }
+
         for (let i = 0; i < detections.landmarks.length; i++) {
           const rawLandmarks = detections.landmarks[i];
           const handednessCategory = detections.handednesses?.[i]?.[0]?.categoryName;
           const transformedWristX = isMirrored ? 1 - rawLandmarks[0].x : rawLandmarks[0].x;
 
           let handType: Hand = 'right';
-          // Upload mode supplies a coordinate mapping. In that mode the user
-          // configures the two visible sides of the final display, so assign
-          // two detected hands by their final on-screen horizontal order.
-          if (coordinateMapping && detections.landmarks.length >= 2) {
-            const ordered = detections.landmarks
-              .map((points, detectionIndex) => ({
-                detectionIndex,
-                x: isMirrored ? 1 - points[0].x : points[0].x,
-              }))
-              .sort((a, b) => a.x - b.x);
-            handType = ordered[0].detectionIndex === i ? 'left' : 'right';
-          } else if (coordinateMapping) {
-            handType = transformedWristX < 0.5 ? 'left' : 'right';
+          if (uploadHandAssignments) {
+            handType = uploadHandAssignments[i];
           } else if (handednessCategory === 'Left') {
             handType = isMirrored ? 'right' : 'left';
           } else if (handednessCategory === 'Right') {
