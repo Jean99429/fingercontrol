@@ -24,6 +24,7 @@ import {
   Heart,
   Info,
   Volume2,
+  Download,
 } from 'lucide-react';
 
 interface PerformanceScreenProps {
@@ -69,6 +70,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   // Selected event in timeline (for inspection or deletion)
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
@@ -290,6 +292,72 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       screenStreamRef.current = null;
     }
     setIsRecording(false);
+  };
+
+  // Export upload-mode composition directly from the canvas. This does not
+  // ask the user to record a tab; it plays the display master once, captures
+  // the rendered overlay, then downloads the resulting WebM automatically.
+  const handleExportVideo = async () => {
+    const canvas = canvasRef.current;
+    const video = hiddenVideoRef.current;
+    if (!canvas || !video || isExporting) return;
+
+    try {
+      speechEngine.stop();
+      triggeredEventIdsRef.current.clear();
+      visualRenderer.reset();
+
+      const canvasStream = canvas.captureStream(30);
+      const exportTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+      const sourceWithCapture = video as HTMLVideoElement & { captureStream?: () => MediaStream };
+      const sourceStream = sourceWithCapture.captureStream?.();
+      if (sourceStream) exportTracks.push(...sourceStream.getAudioTracks());
+      const exportStream = new MediaStream(exportTracks);
+      screenStreamRef.current = exportStream;
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+
+      recordedChunksRef.current = [];
+      const recorder = new MediaRecorder(exportStream, { mimeType });
+      mediaRecorderRef.current = recorder;
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recordedChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `fingercontrol-export-${Date.now()}.webm`;
+        link.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        exportStream.getTracks().forEach((track) => track.stop());
+        screenStreamRef.current = null;
+        mediaRecorderRef.current = null;
+        setIsExporting(false);
+        setIsPlaying(false);
+      };
+
+      const finishExport = () => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      };
+      video.addEventListener('ended', finishExport, { once: true });
+      video.loop = false;
+      video.currentTime = 0;
+      setCurrentTime(0);
+      setIsExporting(true);
+      setIsPlaying(true);
+      recorder.start(250);
+      await video.play();
+    } catch (error) {
+      console.error('Failed to export processed video:', error);
+      screenStreamRef.current?.getTracks().forEach((track) => track.stop());
+      screenStreamRef.current = null;
+      mediaRecorderRef.current = null;
+      setIsExporting(false);
+    }
   };
 
   // ==========================================
@@ -534,19 +602,30 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             </button>
           )}
 
-          {/* Record Button (Uses getDisplayMedia with tab audio) */}
-          <button
-            onClick={isRecording ? handleStopRecording : handleStartRecording}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer ${
-              isRecording
-                ? 'bg-[#FF0000] text-white animate-pulse'
-                : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
-            }`}
-            title="Record Screen & Speech Audio"
-          >
-            <Circle className="w-3.5 h-3.5 fill-current" />
-            {isRecording ? `REC (${recordingSeconds}s)` : 'RECORD'}
-          </button>
+          {inputMode === 'CAMERA' ? (
+            <button
+              onClick={isRecording ? handleStopRecording : handleStartRecording}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer ${
+                isRecording
+                  ? 'bg-[#FF0000] text-white animate-pulse'
+                  : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
+              }`}
+              title="Record Live Camera Performance"
+            >
+              <Circle className="w-3.5 h-3.5 fill-current" />
+              {isRecording ? `REC (${recordingSeconds}s)` : 'RECORD'}
+            </button>
+          ) : (
+            <button
+              onClick={handleExportVideo}
+              disabled={isExporting}
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#FF0000] hover:bg-[#E60000] disabled:opacity-60 text-white transition-colors shadow-sm cursor-pointer"
+              title="Render and download the processed display video"
+            >
+              <Download className="w-3.5 h-3.5" />
+              {isExporting ? `EXPORTING ${formatTime(currentTime)} / ${formatTime(duration)}` : 'DOWNLOAD VIDEO'}
+            </button>
+          )}
         </div>
       </header>
 
@@ -560,7 +639,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           onLoadedMetadata={handleVideoLoadedMetadata}
           playsInline
           muted
-          loop={inputMode === 'UPLOAD_VIDEO'}
+          loop={inputMode === 'UPLOAD_VIDEO' && !isExporting}
           className="hidden"
         />
 
@@ -583,12 +662,14 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         </div>
 
         {/* Recording Hint Notice */}
-        <div className="mt-2 text-[10px] text-[#8A9BA8] flex items-center gap-1.5">
-          <Info className="w-3 h-3 text-[#FF0000]" />
-          <span>
-            Recording: Select "This Tab" and enable "Also share tab audio" in the browser popup to record browser speech synthesis.
-          </span>
-        </div>
+        {inputMode === 'CAMERA' && (
+          <div className="mt-2 text-[10px] text-[#8A9BA8] flex items-center gap-1.5">
+            <Info className="w-3 h-3 text-[#FF0000]" />
+            <span>
+              Recording: Select "This Tab" and enable "Also share tab audio" in the browser popup to record browser speech synthesis.
+            </span>
+          </div>
+        )}
 
         {/* Upload Mode: Interactive Playback & Event Timeline */}
         {inputMode === 'UPLOAD_VIDEO' && (
