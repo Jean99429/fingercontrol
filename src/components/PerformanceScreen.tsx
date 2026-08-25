@@ -10,6 +10,7 @@ import {
 import { gestureRecognizer } from '../vision/gestureRecognizer';
 import { visualRenderer } from '../renderer/visualRenderer';
 import { speechEngine } from '../utils/speechEngine';
+import { audioManager } from '../utils/audio';
 import {
   ArrowLeft,
   Play,
@@ -312,7 +313,23 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       const exportTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
       const sourceWithCapture = video as HTMLVideoElement & { captureStream?: () => MediaStream };
       const sourceStream = sourceWithCapture.captureStream?.();
-      if (sourceStream) exportTracks.push(...sourceStream.getAudioTracks());
+      await audioManager.resumeIfNeeded();
+      const audioContext = audioManager.getAudioContext();
+      const audioMixDestination = audioContext.createMediaStreamDestination();
+      const audioMixSources: MediaStreamAudioSourceNode[] = [];
+
+      const connectToExportMix = (stream: MediaStream | null | undefined) => {
+        const audioTracks = stream?.getAudioTracks() || [];
+        if (audioTracks.length === 0) return;
+        const source = audioContext.createMediaStreamSource(new MediaStream(audioTracks));
+        source.connect(audioMixDestination);
+        audioMixSources.push(source);
+      };
+
+      // Mix original video audio and offline trigger speech into one Opus track.
+      connectToExportMix(sourceStream);
+      connectToExportMix(audioManager.getMediaStream());
+      exportTracks.push(...audioMixDestination.stream.getAudioTracks());
       const exportStream = new MediaStream(exportTracks);
       screenStreamRef.current = exportStream;
 
@@ -335,6 +352,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         exportStream.getTracks().forEach((track) => track.stop());
+        audioMixSources.forEach((source) => source.disconnect());
+        audioMixDestination.stream.getTracks().forEach((track) => track.stop());
         screenStreamRef.current = null;
         mediaRecorderRef.current = null;
         setIsExporting(false);

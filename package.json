@@ -12,6 +12,7 @@
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.18",
     "lucide-react": "^0.475.0",
+    "mespeak": "^2.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

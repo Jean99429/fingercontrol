@@ -205,16 +205,17 @@ export class VisualRenderer {
 
     for (const handKey of ['left', 'right'] as const) {
       const hand = gestureData[handKey];
-      if (!hand.detected || hand.state !== 'ACTIVE' || !hand.activeFinger) {
+      if (!hand.detected) {
         this.smoothedBoxes[handKey].initialized = false;
         for (const tip of Object.values(this.smoothedTips[handKey])) tip.initialized = false;
         continue;
       }
 
       const ft = hand.fingertips;
+      const isTriggerActive = hand.state === 'ACTIVE' && hand.activeFinger !== null;
 
       // 1. Coordinate Frame (SPEC Section 8.2)
-      if (hand.boundingBox) {
+      if (isTriggerActive && hand.boundingBox) {
         const rawBox = hand.boundingBox;
         // Convert the MediaPipe bounds to a generous square tracking field. The
         // square reads as a live coordinate viewport instead of a UI card.
@@ -375,7 +376,7 @@ export class VisualRenderer {
       }
 
       // 2. Pinch connection, visible only while the word is active.
-      {
+      if (isTriggerActive) {
         const targetTip = hand.activeFinger ? ft[hand.activeFinger] : null;
         if (targetTip) {
           const thumbX = ft.thumb.x * width;
@@ -414,14 +415,16 @@ export class VisualRenderer {
         { name: 'pinky', pt: ft.pinky },
       ];
       // Keep one readable coordinate label per detected hand at all times.
-      const coordinateTipName: TipName = (hand.activeFinger as TipName | null) || 'index';
+      const coordinateTipName: TipName = isTriggerActive
+        ? (hand.activeFinger as TipName)
+        : 'index';
 
       for (const tip of tips) {
         const px = tip.pt.x * width;
         const py = tip.pt.y * height;
 
         let r = normalRadius;
-        const isTarget = hand.activeFinger === tip.name || tip.name === 'thumb';
+        const isTarget = isTriggerActive && (hand.activeFinger === tip.name || tip.name === 'thumb');
 
         if (isTarget) {
           r = activeRadius;
@@ -443,18 +446,21 @@ export class VisualRenderer {
 
         ctx.save();
 
-        // Full faint cell + strong open corners. This stays visible over noisy video.
-        ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha * 0.36})`;
-        ctx.lineWidth = Math.max(0.9, 1.15 * scale);
-        ctx.strokeRect(sx - half + 0.5, sy - half + 0.5, half * 2 - 1, half * 2 - 1);
-        ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha})`;
-        ctx.lineWidth = Math.max(1.25, (isLiveTarget ? 1.75 : 1.4) * scale);
-        ctx.beginPath();
-        ctx.moveTo(sx - half, sy - half + corner); ctx.lineTo(sx - half, sy - half); ctx.lineTo(sx - half + corner, sy - half);
-        ctx.moveTo(sx + half - corner, sy - half); ctx.lineTo(sx + half, sy - half); ctx.lineTo(sx + half, sy - half + corner);
-        ctx.moveTo(sx - half, sy + half - corner); ctx.lineTo(sx - half, sy + half); ctx.lineTo(sx - half + corner, sy + half);
-        ctx.moveTo(sx + half - corner, sy + half); ctx.lineTo(sx + half, sy + half); ctx.lineTo(sx + half, sy + half - corner);
-        ctx.stroke();
+        // Recognition frames are transient: the red landmarks and coordinate
+        // chip remain visible, while these green frames only confirm a pinch.
+        if (isTriggerActive) {
+          ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha * 0.36})`;
+          ctx.lineWidth = Math.max(0.9, 1.15 * scale);
+          ctx.strokeRect(sx - half + 0.5, sy - half + 0.5, half * 2 - 1, half * 2 - 1);
+          ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha})`;
+          ctx.lineWidth = Math.max(1.25, (isLiveTarget ? 1.75 : 1.4) * scale);
+          ctx.beginPath();
+          ctx.moveTo(sx - half, sy - half + corner); ctx.lineTo(sx - half, sy - half); ctx.lineTo(sx - half + corner, sy - half);
+          ctx.moveTo(sx + half - corner, sy - half); ctx.lineTo(sx + half, sy - half); ctx.lineTo(sx + half, sy - half + corner);
+          ctx.moveTo(sx - half, sy + half - corner); ctx.lineTo(sx - half, sy + half); ctx.lineTo(sx - half + corner, sy + half);
+          ctx.moveTo(sx + half - corner, sy + half); ctx.lineTo(sx + half, sy + half); ctx.lineTo(sx + half, sy + half - corner);
+          ctx.stroke();
+        }
 
         // Keep the red landmark compact; only the active pair receives a restrained glow.
         if (hand.state === 'ACTIVE' && isTarget) {
