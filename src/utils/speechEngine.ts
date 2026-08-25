@@ -31,6 +31,7 @@ export class SpeechEngine {
   private phraseTimeout: number | null = null;
   private playbackEpoch = 0;
   private modelReady = false;
+  private useNeuralAudio = false;
 
   public loadVoices(): SpeechSynthesisVoice[] {
     void this.loadModel();
@@ -143,6 +144,10 @@ export class SpeechEngine {
     await this.prewarm(slots);
   }
 
+  public setUseNeuralAudio(enabled: boolean): void {
+    this.useNeuralAudio = enabled;
+  }
+
   public triggerWord(slotId: string, rawText: string, slotIndex = 0): boolean {
     if (this.phraseSpeaking) return false;
     const text = this.normalizeSpeechText(rawText);
@@ -152,8 +157,9 @@ export class SpeechEngine {
     this.lastSpoke.set(slotId, now);
     const epoch = this.playbackEpoch;
 
-    // Give immediate audible feedback while the neural model downloads once.
-    if (!this.modelReady) {
+    // Preview and setup always mirror the reference site's immediate system
+    // voices. Neural buffers are reserved for the downloadable video mix.
+    if (!this.useNeuralAudio) {
       this.speakSystem(text, slotIndex);
       return true;
     }

@@ -308,6 +308,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       speechEngine.stop();
       triggeredEventIdsRef.current.clear();
       visualRenderer.reset();
+      speechEngine.setUseNeuralAudio(true);
       await speechEngine.prepare(config.slots);
 
       const canvasStream = canvas.captureStream(30);
@@ -359,6 +360,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         mediaRecorderRef.current = null;
         setIsExporting(false);
         setIsPlaying(false);
+        speechEngine.setUseNeuralAudio(false);
       };
 
       const finishExport = () => {
@@ -378,6 +380,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       screenStreamRef.current = null;
       mediaRecorderRef.current = null;
       setIsExporting(false);
+      speechEngine.setUseNeuralAudio(false);
     }
   };
 
