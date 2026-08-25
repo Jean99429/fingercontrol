@@ -144,11 +144,8 @@ export class VisualRenderer {
   }
 
   public releaseFloatingText(slotId: string): void {
-    const item = this.floatingTexts.get(slotId);
-    if (item) {
-      item.active = false;
-      item.releaseTime = performance.now();
-    }
+    // Release is intentionally immediate: no fade, persistence, or ghost trail.
+    this.floatingTexts.delete(slotId);
   }
 
   /**
@@ -439,15 +436,11 @@ export class VisualRenderer {
         }
 
         const tracker = this.smoothedTips[handKey][tip.name];
-        if (!tracker.initialized) {
-          tracker.x = px;
-          tracker.y = py;
-          tracker.initialized = true;
-        } else {
-          const follow = hand.state === 'ACTIVE' && isTarget ? 0.48 : 0.34;
-          tracker.x += (px - tracker.x) * follow;
-          tracker.y += (py - tracker.y) * follow;
-        }
+        // Use the current landmark directly. Smoothing created visible lag and
+        // made the overlay feel detached from the original accurate tracking.
+        tracker.x = px;
+        tracker.y = py;
+        tracker.initialized = true;
 
         const sx = tracker.x;
         const sy = tracker.y;
@@ -455,19 +448,8 @@ export class VisualRenderer {
         const half = Math.max(19, (isLiveTarget ? (hand.state === 'ACTIVE' ? 27 : 24) : 21) * scale);
         const corner = Math.min(half * 0.4, 9 * scale);
         const frameAlpha = isLiveTarget ? 1 : 0.88;
-        const lag = Math.hypot(px - sx, py - sy);
 
         ctx.save();
-
-        // Hairline vector: visible only while the tracked point is moving.
-        if (lag > 1.2 * scale) {
-          ctx.beginPath();
-          ctx.moveTo(sx, sy);
-          ctx.lineTo(px, py);
-          ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${Math.min(0.38, 0.12 + lag / 70)})`;
-          ctx.lineWidth = Math.max(0.55, 0.65 * scale);
-          ctx.stroke();
-        }
 
         // Full faint cell + strong open corners. This stays visible over noisy video.
         ctx.strokeStyle = `rgba(${TRACK_LIME_RGB}, ${frameAlpha * 0.36})`;
@@ -521,15 +503,13 @@ export class VisualRenderer {
           const coordW = ctx.measureText(coords).width + padX * 2;
           const chipX = handKey === 'left' ? sx - half - coordW - 8 * scale : sx + half + 8 * scale;
           const chipY = sy + half + 7 * scale;
-          const colorPhase = performance.now() / 9000 + tip.pt.x * 0.5 + tip.pt.y * 0.28;
-
-          // P1-style translucent coloured cells with high-contrast white type.
-          ctx.fillStyle = dataColor(colorPhase, 0.48);
+          // P1-style translucent grey cells with high-contrast white type.
+          ctx.fillStyle = 'rgba(48, 50, 55, 0.72)';
           ctx.fillRect(chipX, chipY, coordW, cellH);
           const codeX = handKey === 'left' ? chipX + coordW - codeW : chipX;
-          ctx.fillStyle = dataColor(colorPhase + 0.08, 0.62);
+          ctx.fillStyle = 'rgba(67, 69, 75, 0.82)';
           ctx.fillRect(codeX, chipY - cellH, codeW, cellH - 1);
-          ctx.strokeStyle = dataColor(colorPhase, 0.9);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)';
           ctx.lineWidth = Math.max(0.8, 1 * scale);
           ctx.strokeRect(chipX + 0.5, chipY + 0.5, coordW - 1, cellH - 1);
           ctx.strokeRect(codeX + 0.5, chipY - cellH + 0.5, codeW - 1, cellH - 2);
@@ -580,7 +560,7 @@ export class VisualRenderer {
 
       ctx.save();
       const age = Math.max(0, now - item.spawnTime);
-      const reveal = Math.min(1, age / 220);
+      const reveal = Math.min(1, age / 90);
       const easeOut = 1 - Math.pow(1 - reveal, 3);
       const text = item.text.trim();
       const finger = item.id.split('-').slice(1).join('/').toUpperCase();
@@ -623,9 +603,7 @@ export class VisualRenderer {
       ctx.globalAlpha = item.alpha * easeOut;
       ctx.textBaseline = 'alphabetic';
 
-      const visibleChars = Math.max(1, Math.ceil(text.length * Math.min(1, age / 280)));
-      const motionX = Math.abs(item.vx) > 0.5 ? item.vx : side * 2.4 * scale;
-      const motionY = Math.abs(item.vy) > 0.5 ? item.vy : -1.5 * scale;
+      const visibleChars = Math.max(1, Math.ceil(text.length * Math.min(1, age / 105)));
 
       const drawCharacterRun = (
         originX: number,
@@ -650,22 +628,11 @@ export class VisualRenderer {
         }
       };
 
-      // Three bright P2-inspired colour echoes form a typographic motion trail.
-      for (let trail = 3; trail >= 1; trail--) {
-        const trailAlpha = (0.14 + (4 - trail) * 0.055) * item.alpha * easeOut;
-        drawCharacterRun(
-          drawX - motionX * trail * 1.9,
-          drawY - motionY * trail * 1.9 + trail * 2.2 * scale,
-          dataColor(accentPhase + trail * 0.075, trailAlpha),
-          2.8 + trail * 0.45
-        );
-      }
-
       // Tight per-word colour plate, like a machine-vision annotation label.
       const visibleTextW = ctx.measureText(text.slice(0, visibleChars)).width;
-      const platePadX = 7 * scale;
-      const plateTop = drawY - fontSize * 0.84;
-      const plateHeight = fontSize * 1.08;
+      const platePadX = 10 * scale;
+      const plateTop = drawY - fontSize * 0.9;
+      const plateHeight = fontSize * 1.18;
       ctx.fillStyle = dataColor(accentPhase, 0.86);
       ctx.fillRect(drawX - platePadX, plateTop, visibleTextW + platePadX * 2, plateHeight);
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.46)';
@@ -675,7 +642,7 @@ export class VisualRenderer {
       // White terminal type sits directly inside the coloured plate.
       ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
       ctx.shadowBlur = 4 * scale;
-      drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 2.1, true);
+      drawCharacterRun(drawX, drawY, 'rgba(255, 255, 255, 0.98)', 0, true);
       ctx.shadowBlur = 0;
 
       // A short white registration trace continues beyond the colour plate.

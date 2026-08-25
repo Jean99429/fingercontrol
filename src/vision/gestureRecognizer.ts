@@ -656,8 +656,9 @@ export class GestureRecognizerManager {
           fingerDists.sort((a, b) => a.dist - b.dist);
           const nearest = fingerDists[0];
 
-          const pinchOnThreshold = 0.58;
-          const pinchOffThreshold = 0.74;
+          // Immediate engagement and release: no hysteresis / release buffer.
+          const pinchOnThreshold = 0.64;
+          const pinchOffThreshold = 0.64;
           const now = timestampMs;
 
           const handState = this.states[handType];
