@@ -490,8 +490,8 @@ export class VisualRenderer {
           const fontPx = Math.max(1, Math.round(8 * scale));
           ctx.font = `500 ${fontPx}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
           ctx.textBaseline = 'middle';
-          const padX = Math.max(6, 7 * scale);
-          const cellH = Math.max(19, 21 * scale);
+          const padX = Math.max(1, Math.round(5 * scale));
+          const cellH = Math.max(1, Math.round(14 * scale));
           const codeW = ctx.measureText(code).width + padX * 2;
           const coordW = ctx.measureText(coords).width + padX * 2;
           const chipX = handKey === 'left' ? sx - half - coordW - 8 * scale : sx + half + 8 * scale;
