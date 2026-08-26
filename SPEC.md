@@ -231,7 +231,7 @@ IDLE → APPROACHING → ARMING → ACTIVE → RELEASING → IDLE
 ```
 
 - 进入阈值后保持约 180–250ms 才确认。
-- `pinchOff` 大于 `pinchOn`，形成滞回。
+- 当前实现按 Jean 的即时释放要求使用相同的 `pinchOn / pinchOff = 0.42`，不保留释放缓冲；距离按拇指尖到目标指尖除以手掌尺度计算。
 - ACTIVE 只创建一个事件。
 - 松开并完成冷却后才能再次触发。
 - 多根手指同时靠近时选择归一化距离最近者。
