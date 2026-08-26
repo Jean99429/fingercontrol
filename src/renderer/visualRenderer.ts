@@ -351,7 +351,7 @@ export class VisualRenderer {
 
         // Hand channel and normalized coordinates.
         ctx.globalAlpha = 1;
-        ctx.font = `500 ${Math.max(7, Math.round(7.5 * scale))}px 'JetBrains Mono', monospace`;
+        ctx.font = `500 ${Math.max(1, Math.round(5 * scale))}px 'JetBrains Mono', monospace`;
         ctx.fillStyle = `rgba(${TRACK_LIME_RGB}, 0.26)`;
         ctx.textBaseline = 'top';
         const channel = handKey === 'left' ? 'CH/L' : 'CH/R';
@@ -476,7 +476,7 @@ export class VisualRenderer {
         ctx.fill();
 
         if (tip.name === 'thumb') {
-          ctx.font = `500 ${Math.max(7, Math.round(8 * scale))}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
+          ctx.font = `500 ${Math.max(1, Math.round(5 * scale))}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
           ctx.textBaseline = 'middle';
           ctx.fillStyle = `rgba(${TRACK_LIME_RGB}, 0.94)`;
           ctx.fillText('T', sx + half + 4 * scale, sy);
@@ -487,7 +487,7 @@ export class VisualRenderer {
         if (coordinateTipName === tip.name) {
           const code = `${handKey === 'left' ? 'L' : 'R'}${['thumb', 'index', 'middle', 'ring', 'pinky'].indexOf(tip.name)}`;
           const coords = `${(tip.pt.x * 100).toFixed(1)},${(tip.pt.y * 100).toFixed(1)}`;
-          const fontPx = Math.max(11, Math.round(12 * scale));
+          const fontPx = Math.max(1, Math.round(8 * scale));
           ctx.font = `500 ${fontPx}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
           ctx.textBaseline = 'middle';
           const padX = Math.max(6, 7 * scale);
@@ -563,7 +563,7 @@ export class VisualRenderer {
         : DATA_COLORS.length - 1 - baseFingerColorIndex;
       const accentPhase = fingerColorIndex / DATA_COLORS.length;
 
-      const fontSize = Math.round(44 * scale);
+      const fontSize = Math.max(1, Math.round(30 * scale));
       ctx.font = `500 ${fontSize}px 'IBM Plex Mono', 'JetBrains Mono', monospace`;
       const metrics = ctx.measureText(text);
       const textW = metrics.width;
