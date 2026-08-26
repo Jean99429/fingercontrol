@@ -1,21 +1,37 @@
 # fingercontrol
 
-fingercontrol 是一个独立的“双输入源 + 双手手势识别 + 文字/音频合成”工具，不属于作品集网站代码库。
+fingercontrol 是独立的双手手势文字与语音视频合成工具，不属于 `portfolio WEB OF JEAN`。
 
-## 新方向
+## 当前版本
 
-视觉效果不再由 fingercontrol 生成。进入工具时可选择两种输入模式：
+- 两种输入：实时摄像头，或上传任意本地视频。
+- 可选上传同源干净视频作为隐藏识别轨；显示视频始终是最终画面主轨。
+- 左右手采用同一套规则：拇指是触发器，分别与食指、中指、无名指、小指捏合。
+- 八个手指槽均可输入任意文字。
+- 红色指尖点和坐标标签常显；白色细手框只在文字触发时出现。
+- 触发文字为白字、`#E60340` 底色、无描边、全大写。
+- 所有手指循环使用三种 Kokoro 音色：`af_heart`、`am_puck`、`af_sarah`。
+- Kokoro 仅在需要神经语音时懒加载，不阻塞设置页输入。
+- 上传视频分析会过滤短促误识别事件，显示视频决定时长与最终画面。
+- 完成后保留 `SAVE VIDEO`，只下载 `.mp4`，不伪装或回退为 WebM。
 
-1. `CAMERA`：使用实时摄像头，实时识别并触发文字和音频。
-2. `UPLOAD VIDEO`：上传任意本地视频，逐帧分析后合成文字和音频。
+## 本地运行
 
-两种模式共用相同的左右手八个输入框、手势规则、追踪视觉和 Fingertalk 式浏览器语音。如果上传的视频经过重度风格化处理，还可选择同源原视频作为隐藏识别轨。
+```bash
+npm install
+npm run dev
+```
 
-项目不再包含人物分割、粒子、RGB、Dither、Glyph Dissolve 或其他视觉效果。上传模式原样使用用户选择的视频；摄像头模式显示原始实时画面。
+生产构建：
+
+```bash
+npm run build
+```
 
 ## 文档
 
-- [SPEC.md](./SPEC.md)：唯一权威产品与技术规格。
-- [INTERACTION.md](./INTERACTION.md)：交互与视觉方向摘要。
+- [SPEC.md](./SPEC.md)：当前产品与技术规格。
+- [INTERACTION.md](./INTERACTION.md)：交互和视觉规则。
+- [HANDOFF.md](./HANDOFF.md)：本轮实现总结、已知限制和交接信息。
 
-如文档冲突，以 `SPEC.md` 为准。
+正式项目路径：`/Users/jean/Documents/ChatGPT/fingercontrol`。

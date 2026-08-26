@@ -1,6 +1,6 @@
 # fingercontrol — Product & Technical Specification
 
-状态：需求规格 v2.1（摄像头 / 上传视频双模式）
+状态：实现规格 v3.0（2026-08-26 最终收尾版）
 项目路径：`/Users/jean/Documents/ChatGPT/fingercontrol`  
 归属：独立工具，不属于 `portfolio WEB OF JEAN`
 
@@ -8,17 +8,17 @@
 
 ## 1. 产品定义
 
-fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `UPLOAD VIDEO` 两种输入模式。摄像头模式实时识别和合成；上传模式逐帧分析用户选择的任意本地视频。两种模式都在正确位置叠加自定义文字，并完整复制 Fingertalk 的浏览器语音触发逻辑直接朗读单词。
+fingercontrol 是一个桌面端手势文字与语音视频合成工具，提供 `CAMERA` 和 `UPLOAD VIDEO` 两种输入模式。摄像头模式实时识别和合成；上传模式逐帧分析用户选择的任意本地视频。两种模式都在正确位置叠加自定义文字，并使用三种固定 Kokoro 音色循环朗读任意输入文字。
 
 ### 1.1 核心目标
 
 - 识别实时摄像头或上传视频中的左右手。
 - 识别每只手的拇指与食指、中指、无名指、小指接触。
 - 左右手各显示四个固定文字输入框，共八个单词。
-- 每个单词直接使用浏览器系统英文语音朗读。
+- 所有手指循环使用 `af_heart`、`am_puck`、`af_sarah` 三种音色朗读。
 - 在触发位置显示文字并立即发音。
-- 显示清楚的大号正红指尖点和双手坐标框。
-- 将视频、文字、追踪层和音频合成为可下载的最终文件。
+- 显示清楚的 `#E60340` 指尖点、坐标标签和触发时白色手框。
+- 将视频、文字、追踪层和音频合成为可保存的 MP4 文件。
 
 ### 1.2 明确非目标
 
@@ -26,7 +26,7 @@ fingercontrol 是一个桌面端手势文字合成工具，提供 `CAMERA` 和 `
 - 不在 fingercontrol 中生成 ASCII、Dither、粒子、RGB、Glyph Dissolve 或其他视觉效果。
 - 不包含人物分割或 WebGL 效果库。
 - 不再让右手控制视觉效果；左右手功能完全一致。
-- 不使用 Gemini TTS、外部语音 API或上传音频文件。
+- 不使用 Gemini TTS、外部语音 API 或上传音频文件；Kokoro 在浏览器本地运行。
 - 不用提示音或效果音冒充单词语音。
 - 不提供校准页、账号、数据库或多人协作。
 - 不修改作品集网站。
@@ -44,7 +44,7 @@ fingercontrol
   ├─ MediaPipe 逐帧分析识别视频
   ├─ 生成手势事件时间轴
   ├─ 在显示视频上合成追踪层与文字
-  ├─ 在触发时间点调用浏览器 Speech Synthesis
+  ├─ 在触发时间点播放三音色语音
   └─ 预览并导出最终视频
 
 CAMERA
@@ -64,8 +64,9 @@ CAMERA
 - MediaPipe `@mediapipe/tasks-vision`
 - Hand Landmarker：`runningMode: VIDEO`，`numHands: 2`
 - Canvas 2D：视频、文字和追踪层的最终合成画布
-- Web Speech API：与 Fingertalk 相同的系统语音、解锁和触发逻辑
-- `getDisplayMedia({audio:true})`、Canvas 与 MediaRecorder：录入画面和浏览器语音
+- Kokoro.js：三音色神经语音，仅在需要时动态加载
+- Web Speech API：预览即时语音与 Kokoro 不可用时的回退
+- Canvas、Web Audio 与 MediaRecorder：合成画面、原视频音轨和神经语音
 - localStorage：保存文字与轻量 UI 配置
 - `getUserMedia()`：仅用于 CAMERA 模式
 - 目标平台：桌面 Chrome
@@ -96,7 +97,7 @@ CAMERA
 - 只用于 Hand Landmarker 推理，绝不绘制到最终画面。
 - 如果不存在，则使用 `displayVideo` 完成识别。
 
-双轨模式必须验证时长差不超过 100ms、宽高比一致、起始帧和剪辑点一致。失败时阻止分析并给出明确提示。
+显示视频始终是时长、尺寸和最终画面的主轨。识别视频只负责定位手指，不使用“时长不一致”阻止分析；用户负责保证两条素材起点大致对应。
 
 ### 3.4 上传视频分析方式
 
@@ -166,18 +167,14 @@ UPLOAD VIDEO 模式显示：
 
 拇指只作为触发器，不显示为输入行。
 
-### 5.4 Fingertalk 语音系统
+### 5.4 三音色语音系统
 
-- 使用 `window.speechSynthesis` 和 `SpeechSynthesisUtterance`。
-- 不提供声音选择 UI；程序按 Fingertalk 的规则自动选择。
-- 女性声音优先池：Samantha、Karen、Moira、Tessa、Victoria、Allison、Ava、Susan、Zoe、Kate、Serena、Fiona。
-- 男性声音优先池：Alex、Daniel、Aaron、Fred、Tom、Arthur、Oliver、Gordon、Nathan、Rishi、Lee。
-- 排除 novelty voices：Bad News、Good News、Bahh、Bells、Boing、Bubbles、Cellos、Deranged、Jester、Organ、Superstar、Trinoids、Whisper、Wobble、Zarvox、Albert、Flo、Grandma、Grandpa、Eddy、Reed、Rocko、Sandy、Shelley、Junior。
-- 按输入顺序交替女性/男性声音，并避免连续使用同一个 voice。
-- 女性 pitch：`1.08 + (index % 3) * 0.14`。
-- 男性 pitch：`0.80 + (index % 3) * 0.12`。
-- rate：`0.93 + (index % 2) * 0.06`。
-- volume：`1`。
+- 不提供声音选择 UI。
+- 八个槽按顺序循环使用 `af_heart`、`am_puck`、`af_sarah`。
+- 三种音色分别来自当前 JEAN、I、AM 所使用的最终声音。
+- 任意输入文字都使用这三种音色之一，不限制为 I / AM / JEAN 三个词。
+- Kokoro 模型只在需要神经语音或开始导出时动态加载，禁止设置页启动时预热八个槽。
+- 预览优先使用浏览器英文系统语音保证即时触发；无可用系统语音时回退 Kokoro。
 - `newjeans` 在发音前替换为 `new jeans`。
 - `speechSynthesis.onvoiceschanged` 后重新分配 voices。
 - 点击模式主按钮时执行 `speechSynthesis.resume()`、刷新 voices，并 speak 一个空白 utterance 完成用户手势解锁。
@@ -194,7 +191,7 @@ localStorage 保存八个文字、启用状态、镜像设置和追踪层显示�
 
 - CAMERA 模式显示正常实时摄像头；UPLOAD VIDEO 模式原样显示上传的视频。
 - 在同一个 Canvas 中绘制视频、追踪标记和文字。
-- 声音由浏览器 Speech Synthesis 在实时手势或已分析的事件时间点触发。
+- 预览由系统英文语音即时触发，导出由 Kokoro 音频进入 Web Audio 混音。
 - 不添加任何新的视觉滤镜。
 
 ### 6.2 精简控制
@@ -248,21 +245,21 @@ ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传�
 ### 8.1 指尖点
 
 - 双手各显示五个指尖点。
-- 颜色固定为正红 `#FF0000`，禁止偏橙、偏粉或暗红。
+- 颜色固定为 `#E60340`，无黑色描边。
 - 以 1920×1080 为基准：普通半径 7px，接近时 9px，ACTIVE 时 12px。
 - 根据输出分辨率等比缩放并设置合理上下限。
 - 点必须清楚可见，但不能覆盖整根手指。
 
 ### 8.2 双手坐标框
 
-- 左右手使用完全相同的坐标框。
+- 红点和坐标标签常显；手部框只在对应文字触发时显示。
 - 根据该手 21 个关键点计算屏幕包围盒。
 - 四周增加约 18% padding，使框比手本身明显大一点。
 - 最小可视尺寸约为画面短边的 12%。
-- 使用 2–3px 正红描边。
+- 触发框使用白色细线。
 - 优先使用四角短线，避免厚重封闭矩形。
 - 显示 `L` 或 `R`、短 X/Y 轴和捏合中心十字。
-- 坐标框平滑跟随，避免逐帧抖动。
+- 坐标与点优先低延迟跟随当前识别帧，不增加可感知的额外平滑延迟。
 - 不显示完整骨骼、手腕轨迹或 21 点编号。
 
 所有追踪元素必须绘入合成 Canvas，而不是只作为 HTML 调试层。
@@ -272,18 +269,19 @@ ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传�
 某一行进入 ACTIVE 时：
 
 1. 在拇指与目标手指中点附近生成输入框中的文字。
-2. 使用该行自动分配的系统 voice 朗读文字一次。
-3. 文字在短时间内平滑跟随手部位置。
-4. 松开后短暂停留并淡出。
+2. 使用该行在三音色循环中分配到的 voice 朗读文字一次。
+3. 文字使用白字、`#E60340` 底色、终端等宽字体和少量 padding。
+4. 松开后立即消失，不保留重影、拖尾或释放缓冲。
 5. 单次捏合不重复创建文字或播放音频。
 
 未触发时不显示任何输入框文字。
 
-## 10. Fingertalk 语音触发
+## 10. 语音触发与导出
 
 ### 10.1 唯一声音来源
 
-- 浏览器 Web Speech API 的系统英文 voices。
+- Kokoro `af_heart`、`am_puck`、`af_sarah` 三音色。
+- 预览阶段可使用浏览器系统英文 voice 作为即时路径。
 - 可选保留上传视频已有音轨。
 
 禁止 Gemini TTS、外部语音 API、上传音频文件，以及用点击声、提示音或效果音代替单词朗读。
@@ -297,13 +295,13 @@ ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传�
 - 左右手完全相同，八个非空输入框均可直接发音。
 - 双手心形保持超过 350ms 时，按左右面板和手指顺序将所有非空单词排队朗读；完成前不响应单个单词；心形触发冷却 3500ms。
 
-### 10.3 录制语音
+### 10.3 MP4 导出
 
-- Speech Synthesis 不进入 Web Audio graph，不能假设 Canvas capture 会自动包含它。
-- 内置录制采用与 Fingertalk 相同的 `getDisplayMedia({video:true, audio:true, preferCurrentTab:true, selfBrowserSurface:'include'})` 路线。
-- 明确提示 Jean 选择当前标签页并开启“共享标签页音频”。
-- 如浏览器无法捕获系统语音，使用 OBS 或系统录屏并开启系统音频。
-- 使用 `MediaRecorder.isTypeSupported()` 选择真实支持的编码，不伪装 MP4。
+- 上传模式使用 Canvas capture、显示视频原音轨和 Web Audio Kokoro 音轨完成混音。
+- 依次检测浏览器支持的 MP4/H.264/AAC 或 MP4/H.264/Opus 类型。
+- 只在真实支持 MP4 时创建 MediaRecorder；不支持时明确失败，不生成 WebM 后改扩展名。
+- 导出阶段显示准备与实时渲染进度。
+- 生成 Blob 后既尝试自动下载，也保留持久 `SAVE VIDEO` 链接。
 
 ## 11. 数据模型
 
@@ -357,7 +355,7 @@ type FingercontrolConfig = {
 - 面板边框：低饱和蓝灰。
 - 主文字：接近白。
 - 次要文字：中性灰蓝。
-- 追踪强调色：严格使用 `#FF0000`。
+- 追踪强调色：严格使用 `#E60340`；触发框使用白色。
 - 字体：清晰的等宽字体。
 - 圆角适中，不使用巨大胶囊和过度阴影。
 
@@ -366,12 +364,12 @@ type FingercontrolConfig = {
 - CAMERA 模式摄像头被拒绝或不可用：停留在设置页并说明如何处理。
 - UPLOAD VIDEO 模式显示视频缺失：禁止分析。
 - 视频无法解码：说明支持格式并允许替换。
-- 双轨时长不一致：阻止分析并显示差值。
+- 双轨时长不一致：以显示视频为主轨继续，识别轨只用于坐标辅助。
 - Hand Landmarker 加载失败：提供重试。
 - 只识别到一只手：保留已识别事件并明确报告。
 - 风格化视频识别率过低：建议上传干净识别视频。
 - 音频无法解码：标记具体行，不用提示音代替。
-- 不支持 MP4：导出真实 WebM 并清楚标注。
+- 不支持 MP4：明确提示不支持并停止，不回退成其他容器。
 
 ## 14. 代码重构范围
 
@@ -380,7 +378,7 @@ type FingercontrolConfig = {
 - Person Segmentation。
 - EffectEngine 和全部视觉效果。
 - 左手/右手不同业务逻辑。
-- 旧版可编辑 TTS 设置、音频文件上传和效果音；保留 Speech Synthesis 但按 Fingertalk 逻辑重写。
+- 旧版可编辑 TTS 设置、音频文件上传、效果音和八音色预热。
 - 旧版 `ENABLE CAMERA` 流程和旧版视觉 PERFORMANCE 页面；以新的模式选择和 LIVE/PREVIEW 页面替代。
 
 保留并改造：
@@ -407,17 +405,17 @@ type FingercontrolConfig = {
 
 - 正常摄像头 Canvas 实时画面。
 - 上传视频 Canvas 播放。
-- 大号正红指尖点。
-- 双手坐标框。
-- 文字出现与淡出。
-- Fingertalk 式语音直接触发。
+- `#E60340` 大号指尖点。
+- 常显坐标标签与触发时白色手框。
+- 全大写文字出现并在松开时立即消失。
+- 三音色循环语音直接触发。
 
 ### Phase 3 — 导出与修正
 
 - 轻量事件时间轴。
 - 删除误触事件。
-- 标签页画面 + 标签页音频录制验证。
-- WebM 验证与可选 MP4。
+- Canvas + 原视频音轨 + Kokoro Web Audio 混音验证。
+- 真实 MP4 MediaRecorder 与 `SAVE VIDEO` 验证。
 
 ## 16. MVP 验收标准
 
@@ -445,8 +443,8 @@ type FingercontrolConfig = {
 
 - 指尖点明显大于旧版。
 - 普通点以 1080p 半径 7px 为基准。
-- 颜色是正红 `#FF0000`。
-- 左右手都有比手部略大的坐标框。
+- 颜色是 `#E60340` 且无黑色描边。
+- 红点和坐标常显；左右手触发时出现略大于手部的白色框。
 - 不出现骨骼和满屏 HUD。
 
 ### 文字、声音与导出
@@ -454,8 +452,8 @@ type FingercontrolConfig = {
 - 文字出现在对应捏合位置。
 - 左右手行为一致。
 - 触发时直接朗读输入框单词，而不是播放效果音。
-- 八个单词自动交替使用 Fingertalk 式男女系统声音。
-- 主按钮点击后必须先解锁 Speech Synthesis，不能静默失败。
-- 导出或录屏结果包含原画面、追踪层、文字和可听见的系统语音。
+- 八个槽循环使用 `af_heart`、`am_puck`、`af_sarah` 三种声音。
+- 设置页不预热 Kokoro；首次导出时显示明确的语音准备状态。
+- 导出结果包含原画面、追踪层、文字、原视频音轨和可听见的 Kokoro 语音。
 - 导出视频时长与输入视频一致。
-- 至少稳定导出可播放的带声音 WebM。
+- 稳定导出可播放、带声音、真实容器的 MP4。
