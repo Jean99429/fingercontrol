@@ -300,6 +300,8 @@ ASCII、Dither 或其他重度风格化画面可能破坏手指边缘。上传�
 - 上传模式使用 Canvas capture、显示视频原音轨和 Web Audio Kokoro 音轨完成混音。
 - 依次检测浏览器支持的 MP4/H.264/AAC 或 MP4/H.264/Opus 类型。
 - 只在真实支持 MP4 时创建 MediaRecorder；不支持时明确失败，不生成 WebM 后改扩展名。
+- Canvas 保持显示视频原始像素尺寸，并从解码帧时间估算最接近的 24/25/30/50/60fps。
+- 视频基础码率：720p 9Mbps、1080p 14Mbps、1440p 22Mbps、4K 36Mbps；50/60fps 乘以 1.5。音频码率 192kbps。
 - 导出阶段显示准备与实时渲染进度。
 - 生成 Blob 后既尝试自动下载，也保留持久 `SAVE VIDEO` 链接。
 

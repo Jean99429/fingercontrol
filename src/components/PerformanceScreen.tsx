@@ -55,6 +55,30 @@ const getMp4MimeType = (): string => {
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || '';
 };
 
+const normalizeFrameRate = (fps: number): number => {
+  const commonRates = [24, 25, 30, 50, 60];
+  if (!Number.isFinite(fps) || fps < 10 || fps > 120) return 30;
+  return commonRates.reduce((best, candidate) =>
+    Math.abs(candidate - fps) < Math.abs(best - fps) ? candidate : best
+  );
+};
+
+const getHighQualityRecorderOptions = (
+  mimeType: string,
+  width: number,
+  height: number,
+  frameRate: number
+): MediaRecorderOptions => {
+  const pixels = Math.max(1, width * height);
+  let videoBitsPerSecond = 8_000_000;
+  if (pixels >= 3840 * 2160) videoBitsPerSecond = 36_000_000;
+  else if (pixels >= 2560 * 1440) videoBitsPerSecond = 22_000_000;
+  else if (pixels >= 1920 * 1080) videoBitsPerSecond = 14_000_000;
+  else if (pixels >= 1280 * 720) videoBitsPerSecond = 9_000_000;
+  if (frameRate > 30) videoBitsPerSecond = Math.round(videoBitsPerSecond * 1.5);
+  return { mimeType, videoBitsPerSecond, audioBitsPerSecond: 192_000 };
+};
+
 export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   inputMode,
   config,
@@ -69,6 +93,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const hiddenVideoRef = useRef<HTMLVideoElement | null>(null);
+  const sourceFrameRateRef = useRef<number>(30);
 
   // Playback state (for video mode)
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
@@ -108,6 +133,32 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
     const fIndex = FINGER_LIST.indexOf(finger);
     return hand === 'left' ? fIndex : 4 + fIndex;
   }, []);
+
+  // Estimate the display master's native cadence from decoded frames. This
+  // keeps 24/25/30/50/60fps sources at their nearest original frame rate.
+  useEffect(() => {
+    const video = hiddenVideoRef.current;
+    if (inputMode !== 'UPLOAD_VIDEO' || !video || !video.requestVideoFrameCallback) return;
+    let callbackId = 0;
+    let previousMediaTime: number | null = null;
+    const deltas: number[] = [];
+    const sampleFrame = (_now: number, metadata: VideoFrameCallbackMetadata) => {
+      if (previousMediaTime !== null) {
+        const delta = metadata.mediaTime - previousMediaTime;
+        if (delta > 0.005 && delta < 0.2) {
+          deltas.push(delta);
+          if (deltas.length > 90) deltas.shift();
+          const sorted = [...deltas].sort((a, b) => a - b);
+          const median = sorted[Math.floor(sorted.length / 2)];
+          sourceFrameRateRef.current = normalizeFrameRate(1 / median);
+        }
+      }
+      previousMediaTime = metadata.mediaTime;
+      callbackId = video.requestVideoFrameCallback(sampleFrame);
+    };
+    callbackId = video.requestVideoFrameCallback(sampleFrame);
+    return () => video.cancelVideoFrameCallback(callbackId);
+  }, [displayVideoUrl, inputMode]);
 
   // Update speech engine voice assignments
   useEffect(() => {
@@ -259,7 +310,17 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       if (!mimeType) throw new Error('This browser cannot export MP4.');
 
       recordedChunksRef.current = [];
-      const recorder = new MediaRecorder(stream, { mimeType });
+      const recordingTrackSettings = stream.getVideoTracks()[0]?.getSettings();
+      const recordingFps = normalizeFrameRate(recordingTrackSettings?.frameRate || 30);
+      const recorder = new MediaRecorder(
+        stream,
+        getHighQualityRecorderOptions(
+          mimeType,
+          recordingTrackSettings?.width || canvasRef.current?.width || 1920,
+          recordingTrackSettings?.height || canvasRef.current?.height || 1080,
+          recordingFps
+        )
+      );
 
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) {
@@ -335,7 +396,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       );
       await speechEngine.prepare(usedSlots);
 
-      const canvasStream = canvas.captureStream(30);
+      const exportFrameRate = sourceFrameRateRef.current;
+      const canvasStream = canvas.captureStream(exportFrameRate);
       const exportTracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
       const sourceWithCapture = video as HTMLVideoElement & { captureStream?: () => MediaStream };
       const sourceStream = sourceWithCapture.captureStream?.();
@@ -363,7 +425,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       if (!mimeType) throw new Error('This browser cannot export MP4.');
 
       recordedChunksRef.current = [];
-      const recorder = new MediaRecorder(exportStream, { mimeType });
+      const recorder = new MediaRecorder(
+        exportStream,
+        getHighQualityRecorderOptions(mimeType, canvas.width, canvas.height, exportFrameRate)
+      );
       mediaRecorderRef.current = recorder;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) recordedChunksRef.current.push(event.data);
