@@ -235,7 +235,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         // Draw composite frame
-        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo);
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo, config.slots);
       }
 
       animationFrameId = requestAnimationFrame(renderLoop);
@@ -573,7 +573,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         }
 
         // Draw composite frame
-        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo);
+        visualRenderer.renderFrame(video, gestureData, config.trackingVisible, time, config.mirroredVideo, config.slots);
       }
 
       animationFrameId = requestAnimationFrame(previewLoop);
@@ -585,7 +585,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       cancelAnimationFrame(animationFrameId);
       speechEngine.stop();
     };
-  }, [inputMode, analysisFrames, gestureEvents, config.trackingVisible, config.mirroredVideo, getSlotIndex]);
+  }, [inputMode, analysisFrames, gestureEvents, config.trackingVisible, config.mirroredVideo, config.slots, getSlotIndex]);
 
   // Video metadata load
   const handleVideoLoadedMetadata = () => {
@@ -655,30 +655,30 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
   };
 
   return (
-    <div className="min-h-screen bg-[#07111F] text-[#E0E6ED] flex flex-col font-mono select-none">
+    <div className="min-h-screen bg-[#101217] text-[#F6F1E8] flex flex-col font-sans select-none">
       
       {/* Top Bar */}
-      <header className="h-14 border-b border-[#1E2E42] bg-[#0C1929] px-4 flex items-center justify-between z-10">
+      <header className="h-16 border-b border-[#303239] bg-[#15171C] px-5 flex items-center justify-between z-10">
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
               speechEngine.stop();
               onBackToSetup();
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#15171C] hover:bg-[#272A31] border border-[#303239] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             BACK TO SETUP
           </button>
 
-          <div className="h-4 w-px bg-[#1E2E42]" />
+          <div className="h-4 w-px bg-[#303239]" />
 
           <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#FF0000] inline-block"></span>
+            <span className="w-2 h-2 rounded-full bg-[#5CFFB0] inline-block"></span>
             <span className="font-bold text-xs uppercase text-white tracking-widest">
               FINGERCONTROL
             </span>
-            <span className="text-[10px] text-[#8A9BA8] bg-[#07111F] border border-[#1E2E42] px-2 py-0.5 rounded uppercase">
+            <span className="text-[10px] text-[#92949A] bg-[#15171C] border border-[#303239] px-2 py-0.5 rounded uppercase">
               {inputMode === 'CAMERA' ? 'LIVE CAMERA' : 'VIDEO PREVIEW'}
             </span>
           </div>
@@ -695,10 +695,10 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                 speechEngine.triggerWord(firstSlot.id, firstSlot.text || 'TEST', 0);
               }
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-[#C5D1DE] hover:text-white transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#15171C] hover:bg-[#272A31] border border-[#303239] text-xs uppercase font-medium text-[#D8D3CA] hover:text-white transition-colors cursor-pointer"
             title="Click to test speech synthesis sound"
           >
-            <Volume2 className="w-3.5 h-3.5 text-[#FF0000]" />
+            <Volume2 className="w-3.5 h-3.5 text-[#5CFFB0]" />
             <span className="hidden sm:inline">TEST SOUND</span>
           </button>
 
@@ -707,12 +707,12 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             onClick={() => onUpdateConfig({ ...config, trackingVisible: !config.trackingVisible })}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors cursor-pointer ${
               config.trackingVisible
-                ? 'bg-[#152336] border-[#FF0000]/50 text-white'
-                : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
+                ? 'bg-[#272A31] border-[#5CFFB0]/50 text-white'
+                : 'bg-[#15171C] border-[#303239] text-[#92949A]'
             }`}
             title="Toggle Tracking Overlay"
           >
-            {config.trackingVisible ? <Eye className="w-3.5 h-3.5 text-[#FF0000]" /> : <EyeOff className="w-3.5 h-3.5" />}
+            {config.trackingVisible ? <Eye className="w-3.5 h-3.5 text-[#5CFFB0]" /> : <EyeOff className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">TRACKING</span>
           </button>
 
@@ -721,8 +721,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             onClick={() => onUpdateConfig({ ...config, mirroredVideo: !config.mirroredVideo })}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs uppercase font-medium border transition-colors cursor-pointer ${
               config.mirroredVideo
-                ? 'bg-[#152336] border-[#2A4365] text-white'
-                : 'bg-[#07111F] border-[#1E2E42] text-[#8A9BA8]'
+                ? 'bg-[#272A31] border-[#5CFFB0] text-white'
+                : 'bg-[#15171C] border-[#303239] text-[#92949A]'
             }`}
             title="Toggle Mirror"
           >
@@ -734,7 +734,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
           {inputMode === 'UPLOAD_VIDEO' && (
             <button
               onClick={onReanalyze}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#15171C] hover:bg-[#272A31] border border-[#303239] text-xs uppercase font-medium text-white transition-colors cursor-pointer"
               title="Re-run Hand Detection Analysis"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -747,8 +747,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
               onClick={isRecording ? handleStopRecording : handleStartRecording}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider transition-colors shadow-sm cursor-pointer ${
                 isRecording
-                  ? 'bg-[#FF0000] text-white animate-pulse'
-                  : 'bg-[#FF0000] hover:bg-[#E60000] text-white'
+                  ? 'bg-[#5CFFB0] text-[#101217] animate-pulse'
+                  : 'bg-[#5CFFB0] hover:bg-[#42E69A] text-[#101217]'
               }`}
               title="Record Live Camera Performance"
             >
@@ -759,7 +759,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <a
               href={completedExport.url}
               download={completedExport.fileName}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#E60340] hover:bg-[#c90236] text-white transition-colors shadow-sm cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#5CFFB0] hover:bg-[#42E69A] text-[#101217] transition-colors shadow-sm cursor-pointer"
               title="Save the completed processed video"
             >
               <Download className="w-3.5 h-3.5" />
@@ -769,7 +769,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
             <button
               onClick={handleExportVideo}
               disabled={isExporting}
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#FF0000] hover:bg-[#E60000] disabled:opacity-60 text-white transition-colors shadow-sm cursor-pointer"
+              className="flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-bold uppercase tracking-wider bg-[#5CFFB0] hover:bg-[#42E69A] disabled:opacity-60 text-[#101217] transition-colors shadow-sm cursor-pointer"
               title="Render and download the processed display video"
             >
               <Download className="w-3.5 h-3.5" />
@@ -784,7 +784,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
       </header>
 
       {/* Main Content Area */}
-      <main className="flex-1 flex flex-col items-center justify-center p-4 bg-[#050C16] relative overflow-hidden">
+      <main className="flex-1 flex flex-col items-center justify-center p-4 bg-[#101217] relative overflow-hidden">
         
         {/* Hidden video element for feed decoding */}
         <video
@@ -798,7 +798,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
         />
 
         {/* Master Composition Canvas */}
-        <div className="relative max-w-full max-h-[75vh] flex items-center justify-center rounded-lg border border-[#1E2E42] bg-[#000000] shadow-2xl overflow-hidden">
+        <div className="relative max-w-full max-h-[75vh] flex items-center justify-center rounded-lg border border-[#303239] bg-[#000000] shadow-2xl overflow-hidden">
           <canvas
             ref={canvasRef}
             className="max-w-full max-h-[75vh] object-contain block"
@@ -806,8 +806,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
           {/* Two-Hand Heart Detected Overlay Badge */}
           {heartDetected && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-[#FF0000]/90 backdrop-blur-md text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2 animate-bounce z-20">
-              <Heart className="w-4 h-4 fill-white" />
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-[#5CFFB0]/90 backdrop-blur-md text-[#101217] px-4 py-2 rounded-full shadow-lg flex items-center gap-2 animate-bounce z-20">
+              <Heart className="w-4 h-4 fill-[#101217]" />
               <span className="text-xs font-bold tracking-wider uppercase">
                 TWO-HAND HEART // FULL PHRASE SPEAKING
               </span>
@@ -817,8 +817,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
         {/* Recording Hint Notice */}
         {inputMode === 'CAMERA' && (
-          <div className="mt-2 text-[10px] text-[#8A9BA8] flex items-center gap-1.5">
-            <Info className="w-3 h-3 text-[#FF0000]" />
+          <div className="mt-2 text-[10px] text-[#92949A] flex items-center gap-1.5">
+            <Info className="w-3 h-3 text-[#5CFFB0]" />
             <span>
               Recording: Select "This Tab" and enable "Also share tab audio" in the browser popup to record browser speech synthesis.
             </span>
@@ -827,18 +827,18 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
 
         {/* Upload Mode: Interactive Playback & Event Timeline */}
         {inputMode === 'UPLOAD_VIDEO' && (
-          <div className="w-full max-w-4xl mt-3 bg-[#0C1929] border border-[#1E2E42] rounded-md p-3 space-y-2 text-xs">
+          <div className="w-full max-w-4xl mt-3 bg-[#1C1E24] border border-[#303239] rounded-md p-3 space-y-2 text-xs">
             {/* Timeline Controls */}
             <div className="flex items-center gap-3">
               <button
                 onClick={togglePlayPause}
-                className="p-2 rounded bg-[#07111F] hover:bg-[#152336] border border-[#1E2E42] text-white transition-colors cursor-pointer"
+                className="p-2 rounded bg-[#15171C] hover:bg-[#272A31] border border-[#303239] text-white transition-colors cursor-pointer"
                 title={isPlaying ? 'Pause' : 'Play'}
               >
                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
               </button>
 
-              <span className="text-[11px] font-mono text-[#8A9BA8] shrink-0">
+              <span className="text-[11px] font-mono text-[#92949A] shrink-0">
                 {formatTime(currentTime)} / {formatTime(duration)}
               </span>
 
@@ -851,7 +851,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                   step={0.01}
                   value={currentTime}
                   onChange={(e) => handleSeek(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-[#07111F] rounded-lg appearance-none cursor-pointer accent-[#FF0000]"
+                  className="w-full h-1.5 bg-[#15171C] rounded-lg appearance-none cursor-pointer accent-[#5CFFB0]"
                 />
 
                 {/* Event Markers along Timeline */}
@@ -870,8 +870,8 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                         style={{ left: `${leftPct}%` }}
                         className={`absolute top-0 w-2 h-6 -ml-1 cursor-pointer transition-all ${
                           isSelected
-                            ? 'bg-white z-10 ring-2 ring-[#FF0000]'
-                            : 'bg-[#FF0000] hover:bg-white hover:scale-125 opacity-80'
+                            ? 'bg-white z-10 ring-2 ring-[#5CFFB0]'
+                            : 'bg-[#5CFFB0] hover:bg-white hover:scale-125 opacity-80'
                         }`}
                         title={`${ev.hand.toUpperCase()} ${ev.finger.toUpperCase()}: "${ev.text}" at ${ev.startTime.toFixed(2)}s`}
                       />
@@ -879,25 +879,25 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                   })}
               </div>
 
-              <span className="text-[10px] text-[#8A9BA8] uppercase shrink-0">
+              <span className="text-[10px] text-[#92949A] uppercase shrink-0">
                 {gestureEvents.length} DETECTED EVENTS
               </span>
             </div>
 
             {/* Selected Event Details & Deletion */}
             {selectedEventId && (
-              <div className="flex items-center justify-between bg-[#07111F] border border-[#1E2E42] px-3 py-1.5 rounded text-[11px]">
+              <div className="flex items-center justify-between bg-[#15171C] border border-[#303239] px-3 py-1.5 rounded text-[11px]">
                 {(() => {
                   const ev = gestureEvents.find((e) => e.id === selectedEventId);
                   if (!ev) return null;
                   return (
                     <>
                       <div className="flex items-center gap-3">
-                        <span className="text-[#FF0000] font-bold uppercase">
+                        <span className="text-[#5CFFB0] font-bold uppercase">
                           [{ev.hand.toUpperCase()} {ev.finger.toUpperCase()}]
                         </span>
                         <span className="text-white font-medium">"{ev.text}"</span>
-                        <span className="text-[#8A9BA8] flex items-center gap-1">
+                        <span className="text-[#92949A] flex items-center gap-1">
                           <Clock className="w-3 h-3" />
                           {ev.startTime.toFixed(2)}s - {ev.releaseTime.toFixed(2)}s
                         </span>
@@ -905,7 +905,7 @@ export const PerformanceScreen: React.FC<PerformanceScreenProps> = ({
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => handleDeleteEvent(ev.id)}
-                          className="text-[#8A9BA8] hover:text-[#FF0000] flex items-center gap-1 transition-colors cursor-pointer"
+                          className="text-[#92949A] hover:text-[#5CFFB0] flex items-center gap-1 transition-colors cursor-pointer"
                           title="Delete False Trigger"
                         >
                           <Trash2 className="w-3 h-3" /> DELETE EVENT

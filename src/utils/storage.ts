@@ -20,14 +20,14 @@ export const DEFAULT_CONFIG: FingercontrolConfig = {
       hand: 'left',
       finger: 'middle',
       enabled: true,
-      text: 'VECTOR',
+      text: 'PULSE',
     },
     {
       id: 'left-ring',
       hand: 'left',
       finger: 'ring',
       enabled: true,
-      text: 'PULSE',
+      text: 'VECTOR',
     },
     {
       id: 'left-pinky',
@@ -74,6 +74,12 @@ export function loadConfig(): FingercontrolConfig {
     if (!raw) return DEFAULT_CONFIG;
     const parsed = JSON.parse(raw);
     if (parsed && parsed.version === 2 && Array.isArray(parsed.slots) && parsed.slots.length === 8) {
+      const middle = parsed.slots.find((slot: { hand: string; finger: string; text: string }) => slot.hand === 'left' && slot.finger === 'middle');
+      const ring = parsed.slots.find((slot: { hand: string; finger: string; text: string }) => slot.hand === 'left' && slot.finger === 'ring');
+      if (middle?.text === 'VECTOR' && ring?.text === 'PULSE') {
+        middle.text = 'PULSE';
+        ring.text = 'VECTOR';
+      }
       return parsed as FingercontrolConfig;
     }
   } catch (err) {

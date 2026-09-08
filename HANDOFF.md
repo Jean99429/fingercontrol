@@ -1,53 +1,54 @@
-# fingercontrol Handoff — 2026-08-26
+# fingercontrol Handoff — 2026-09-08
 
-## 最终目标
+## 当前目标
 
-把已完成视觉风格的视频作为显示主轨，离线识别双手捏合，在正确时间与位置叠加文字、追踪视觉和语音，并下载成片。实时摄像头模式保留，但上传视频是主要制作流程。
+以两只张开的手作为可直接编辑与表演的界面：八根非拇指承载文字，拇指捏合对应手指触发语音。设置页与表演页使用同一套文字映射、字体、颜色和设计语言。
 
-## 已完成
+## 本轮已完成
 
-- CAMERA / UPLOAD VIDEO 双模式。
-- 左右手八个可编辑文字槽；双手统一捏合规则。
-- 显示视频与可选识别视频双轨。
-- 离线手势分析、事件时间轴、事件删除和重新分析。
-- 镜像与左右手映射修正。
-- 短促错误事件过滤，解决 WELCOME 前闪现 HI 等问题。
-- `#E60340` 指尖点和文字底色；白色触发框；灰底白字坐标。
-- 文字全大写、无黑描边、无拖尾，松开立即消失。
-- Kokoro 神经语音与 Web Audio 导出混音。
-- 仅保留并循环三种音色：`af_heart`、`am_puck`、`af_sarah`。
-- Kokoro 动态导入；初始主脚本由约 2.6MB 降至约 397KB。
-- 导出阶段反馈、持久 `SAVE VIDEO` 链接和 `.mp4` 文件名。
-- 导出保持原始像素尺寸、自动估算常见原帧率，并设置高码率 MP4 与 192kbps 音频。
+- 设置页重构为两只大型镜像手掌，不再使用传统双栏表单。
+- 八个文字输入直接定位在对应手指上，移除输入框外框、下划线、暗色底和旋转角度。
+- 修正手掌、文字与拇指触发点的位移和左右镜像关系。
+- 增加八套指定字体与颜色，并抽取为共享 `SLOT_VISUALS` 配置。
+- 修正左手默认映射：中指 `PULSE`、无名指 `VECTOR`，并迁移旧 localStorage 默认值。
+- 新首页文案：`Pinch a finger. Make it speak.`；摄像头按钮改为 `Start performing`。
+- 表演页在识别到手后常显四根手指文字，不再只在触发期间显示。
+- 表演页文字与首页完全共用内容、字体、字重、斜体和颜色。
+- 应用主强调色由大红改为薄荷绿 `#5CFFB0`。
+- 红色仅保留为手指追踪语义；首页拇指点与表演页指尖点统一为 `#E60340`。
+- 表演页顶部栏、按钮、边框、背景和状态控件统一为首页的深色视觉语言。
+- 保留 CAMERA / UPLOAD VIDEO、MediaPipe、语音、事件时间轴和 MP4 导出能力。
 
 ## 关键实现文件
 
-- `src/components/SetupScreen.tsx`：设置与视频选择。
-- `src/components/PerformanceScreen.tsx`：预览、播放、语音混音和 MP4 导出。
-- `src/vision/gestureRecognizer.ts`：MediaPipe、左右手与事件稳定。
-- `src/renderer/visualRenderer.ts`：红点、坐标、白框和触发文字。
-- `src/utils/speechEngine.ts`：三音色 Kokoro、系统语音回退和懒加载。
-- `src/utils/audio.ts`：Web Audio 混音与导出音轨。
+- `src/components/SetupScreen.tsx`：双手设置页与直接文字编辑。
+- `src/components/PerformanceScreen.tsx`：实时/视频表演页、控制、语音和导出。
+- `src/utils/slotVisuals.ts`：八个手指槽共享字体与颜色配置。
+- `src/renderer/visualRenderer.ts`：指尖追踪、常显文字与 Canvas 合成。
+- `src/utils/storage.ts`：默认文字和旧配置迁移。
+- `src/index.css`：全局视觉系统、双手布局、字体与响应式规则。
+- `public/assets/hand-right.svg`：当前双手共用的右手 SVG；左手由 CSS 镜像。
+- `public/assets/ATTRIBUTION.md`：手部图形来源说明。
 
-## 验收步骤
+## 验收结果
 
-1. 在 SETUP 输入八个文字。
-2. 上传显示视频；必要时添加同源干净识别视频。
-3. 点击分析，确认事件的手、手指、时间和位置。
-4. 播放检查：红点与坐标跟手，触发时出现白框、文字和声音。
-5. 点击 `DOWNLOAD VIDEO`。
-6. 等待 `PREPARING AUDIO…` 与 `EXPORTING…` 完成。
-7. 点击 `SAVE VIDEO`，确认文件扩展名为 `.mp4` 且包含声音。
+- TypeScript 与 Vite 生产构建通过。
+- 八款指定 Google Fonts 均按对应字重/斜体成功加载。
+- 首页八个文字值、字体 class、颜色与水平位置已在本地预览核对。
+- CAMERA 内页已实际打开检查，薄荷绿主色和深色界面已生效。
+- 手指文字常显逻辑已接入 CAMERA 与 UPLOAD VIDEO 两条渲染路径。
 
 ## 已知限制
 
-- 浏览器必须原生支持某种 `video/mp4` MediaRecorder 编码；不支持时不会生成假的 MP4。
-- 首次导出需要下载并初始化 Kokoro 模型，因此语音准备时间比后续导出长。
-- 本地视频 File 对象不会写入 localStorage，刷新或热更新后必须重新选择视频。
-- 重度 ASCII / Dither 视频仍建议搭配同源干净识别视频。
+- 常显文字需要 MediaPipe 检测到手后才会出现在画布上。
+- Google Fonts 需要网络；网络不可用时会使用各字体声明中的本地回退字体。
+- 浏览器必须原生支持某种 MP4 MediaRecorder 编码，否则导出会明确失败。
+- 首次使用 Kokoro 需要下载并初始化模型，准备时间较长。
+- 本地视频 `File` 对象不会写入 localStorage，刷新后需要重新选择。
+- 重度 ASCII / Dither 视频建议搭配同源干净识别视频。
 
 ## 仓库
 
-- 正式路径：`/Users/jean/Documents/ChatGPT/fingercontrol`
-- GitHub：`https://github.com/Jean99429/fingercontrol`
-- 不要修改：`/Users/jean/Documents/ChatGPT/portfolio WEB OF JEAN`
+- 本地路径：`/Users/jean/Documents/ChatGPT/Fingercontrol 2`
+- GitHub：<https://github.com/Jean99429/fingercontrol>
+- 分支：`main`

@@ -1,20 +1,32 @@
 # fingercontrol
 
-fingercontrol 是独立的双手手势文字与语音视频合成工具，不属于 `portfolio WEB OF JEAN`。
+fingercontrol 是一个以双手为界面的手势文字与语音工具。用户可以直接编辑八根非拇指上的文字，再用拇指与对应手指捏合触发语音。项目独立于 `portfolio WEB OF JEAN`。
 
 ## 当前版本
 
-- 两种输入：实时摄像头，或上传任意本地视频。
-- 可选上传同源干净视频作为隐藏识别轨；显示视频始终是最终画面主轨。
-- 左右手采用同一套规则：拇指是触发器，分别与食指、中指、无名指、小指捏合。
-- 八个手指槽均可输入任意文字。
-- 红色指尖点和坐标标签常显；白色细手框只在文字触发时出现。
-- 触发文字为白字、`#E60340` 底色、无描边、全大写。
-- 所有手指循环使用三种 Kokoro 音色：`af_heart`、`am_puck`、`af_sarah`。
-- Kokoro 仅在需要神经语音时懒加载，不阻塞设置页输入。
-- 上传视频分析会过滤短促误识别事件，显示视频决定时长与最终画面。
-- 完成后保留 `SAVE VIDEO`，只下载 `.mp4`，不伪装或回退为 WebM。
-- 导出保持显示视频原始像素尺寸，自动估算 24/25/30/50/60fps，并按分辨率使用高码率重新编码。
+- 首页以两只镜像手掌作为主要界面，文字直接显示并编辑在对应手指上。
+- 拇指不放文字，只保留 `#E60340` 触发点。
+- 左手：FLOW / VECTOR / PULSE / SIGNAL；右手：OBJECT / MOTION / SPACE / TIME。
+- 八个槽使用各自的英文字体、字重、斜体和颜色；设置页与表演页共用同一份视觉配置。
+- 首页引导文案为 “Pinch a finger. Make it speak.”，摄像头入口为 “Start performing”。
+- 表演页在检测到手后常显四根手指的文字，不必等捏合后才出现。
+- 应用以 `#5CFFB0` 薄荷绿为主强调色；红色仅用于手指追踪点，内外页红点统一为 `#E60340`。
+- 支持实时摄像头和本地视频上传；可选同源干净视频作为隐藏识别轨。
+- 使用 MediaPipe 识别双手捏合，以 Kokoro / 系统语音朗读文字。
+- 上传模式支持事件时间轴、误触删除、重新分析和 MP4 导出。
+
+## 默认手指映射
+
+| 手 | 手指 | 文字 | 字体 | 颜色 |
+| --- | --- | --- | --- | --- |
+| 左 | 小指 | FLOW | Instrument Serif Italic | `#C77CFF` |
+| 左 | 无名指 | VECTOR | Unbounded 800 | `#E65100` |
+| 左 | 中指 | PULSE | Caveat 700 | `#3CD9FF` |
+| 左 | 食指 | SIGNAL | Archivo Black 900 | `#FF5A5A` |
+| 右 | 食指 | OBJECT | DM Mono 500 | `#FF5A5A` |
+| 右 | 中指 | MOTION | Space Grotesk 700 | `#FFB300` |
+| 右 | 无名指 | SPACE | Bricolage Grotesque 800 | `#3CD9FF` |
+| 右 | 小指 | TIME | Playfair Display 600 Italic | `#5CFFB0` |
 
 ## 本地运行
 
@@ -31,8 +43,9 @@ npm run build
 
 ## 文档
 
-- [SPEC.md](./SPEC.md)：当前产品与技术规格。
+- [SPEC.md](./SPEC.md)：产品与技术规格。
 - [INTERACTION.md](./INTERACTION.md)：交互和视觉规则。
-- [HANDOFF.md](./HANDOFF.md)：本轮实现总结、已知限制和交接信息。
+- [HANDOFF.md](./HANDOFF.md)：当前实现、验证结果和已知限制。
 
-正式项目路径：`/Users/jean/Documents/ChatGPT/fingercontrol`。
+本地项目路径：`/Users/jean/Documents/ChatGPT/Fingercontrol 2`
+GitHub：<https://github.com/Jean99429/fingercontrol>

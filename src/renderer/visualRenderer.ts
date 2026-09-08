@@ -1,4 +1,5 @@
-import { Hand, HandGestureData } from '../types/config';
+import { ContentSlot, Finger, Hand, HandGestureData } from '../types/config';
+import { SLOT_VISUALS } from '../utils/slotVisuals';
 
 export interface FloatingTextItem {
   id: string;
@@ -154,7 +155,8 @@ export class VisualRenderer {
     gestureData: { left: HandGestureData; right: HandGestureData },
     trackingVisible: boolean = true,
     now: number = performance.now(),
-    isMirrored: boolean = false
+    isMirrored: boolean = false,
+    slots: ContentSlot[] = []
   ): void {
     if (!this.canvas || !this.ctx) return;
 
@@ -183,8 +185,52 @@ export class VisualRenderer {
       this.renderTrackingLayer(ctx, width, height, gestureData);
     }
 
-    // 3. Draw Floating Text Typography Layer
-    this.renderFloatingTextLayer(ctx, width, height, now);
+    // Finger words stay visible whenever a hand is detected, independent of
+    // pinch state and the optional technical tracking overlay.
+    this.renderPersistentFingerLabels(ctx, width, height, gestureData, slots);
+  }
+
+  private renderPersistentFingerLabels(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    gestureData: { left: HandGestureData; right: HandGestureData },
+    slots: ContentSlot[]
+  ): void {
+    const scale = Math.max(0.72, Math.min(width, height) / 1080);
+    const fingers: Finger[] = ['index', 'middle', 'ring', 'pinky'];
+
+    for (const handKey of ['left', 'right'] as const) {
+      const hand = gestureData[handKey];
+      if (!hand.detected) continue;
+
+      for (const finger of fingers) {
+        const slot = slots.find((candidate) => candidate.hand === handKey && candidate.finger === finger);
+        const text = slot?.text.trim() || finger.toUpperCase();
+        const visual = SLOT_VISUALS[handKey][finger];
+        const tip = hand.fingertips[finger];
+        const isActive = hand.state === 'ACTIVE' && hand.activeFinger === finger;
+        let fontSize = Math.round((isActive ? 31 : 27) * scale);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillStyle = visual.color;
+        ctx.globalAlpha = isActive ? 1 : 0.94;
+        ctx.font = `${visual.fontStyle} ${visual.fontWeight} ${fontSize}px "${visual.fontFamily}"`;
+
+        const maxWidth = Math.max(86 * scale, width * 0.16);
+        while (ctx.measureText(text).width > maxWidth && fontSize > 12 * scale) {
+          fontSize -= 1;
+          ctx.font = `${visual.fontStyle} ${visual.fontWeight} ${fontSize}px "${visual.fontFamily}"`;
+        }
+
+        const x = Math.max(maxWidth / 2 + 8, Math.min(width - maxWidth / 2 - 8, tip.x * width));
+        const y = Math.max(fontSize + 8, tip.y * height - 18 * scale);
+        ctx.fillText(text, x, y);
+        ctx.restore();
+      }
+    }
   }
 
   /**
