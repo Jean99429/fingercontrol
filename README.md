@@ -1,6 +1,14 @@
-# fingercontrol
+# Fingercontrol
 
 fingercontrol 是一个以双手为界面的手势文字与语音工具。用户可以直接编辑八根非拇指上的文字，再用拇指与对应手指捏合触发语音。项目独立于 `portfolio WEB OF JEAN`。
+
+## 功能亮点
+
+- 用 MediaPipe 在浏览器中实时识别双手和捏合手势。
+- 为八根手指分别配置文字、字体、颜色与语音。
+- 支持摄像头实时表演和本地视频分析。
+- 支持编辑事件时间轴并导出 MP4。
+- 摄像头与视频识别在本地浏览器中完成，不上传媒体内容。
 
 ## 当前版本
 
@@ -31,7 +39,7 @@ fingercontrol 是一个以双手为界面的手势文字与语音工具。用户
 ## 本地运行
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
@@ -47,5 +55,14 @@ npm run build
 - [INTERACTION.md](./INTERACTION.md)：交互和视觉规则。
 - [HANDOFF.md](./HANDOFF.md)：当前实现、验证结果和已知限制。
 
-本地项目路径：`/Users/jean/Documents/ChatGPT/Fingercontrol 2`
-GitHub：<https://github.com/Jean99429/fingercontrol>
+## 浏览器要求
+
+建议使用最新版 Chrome 或 Edge。实时模式需要摄像头权限；语音效果取决于浏览器提供的语音能力及 Kokoro 模型的可用性。
+
+## 参与贡献
+
+欢迎提交 issue 和 pull request。开始前请阅读 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+
+## 许可证
+
+本项目采用 [MIT License](./LICENSE)。
