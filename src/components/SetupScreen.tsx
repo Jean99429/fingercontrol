@@ -52,7 +52,7 @@ const HandEditor: React.FC<HandEditorProps> = ({ hand, config, onUpdateSlot }) =
       <div className="hand-stage">
         <img
           className="hand-emoji"
-          src="/assets/hand-right.svg"
+          src="./assets/hand-right.svg"
           alt=""
           aria-hidden="true"
         />
